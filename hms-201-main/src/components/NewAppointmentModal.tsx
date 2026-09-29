@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
 import { AppointmentPriority } from '../types';
+import { getDoctorDutyWindow, getDutyAppointmentSlots } from '../utils/doctorDutySchedule';
 
 interface NewAppointmentModalProps {
   isOpen: boolean;
@@ -29,7 +30,7 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   presetDate,
   presetTimeSlot,
 }) => {
-  const { patients, doctors, appointments, addAppointment, addNotification } = useHospital();
+  const { patients, doctors, doctorDutySchedules, appointments, addAppointment, addNotification } = useHospital();
 
   const [patientId, setPatientId] = useState(patients[0]?.id || '');
   const [doctorId, setDoctorId] = useState(presetDoctorId || doctors[0]?.id || '');
@@ -39,6 +40,13 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   const [isTelehealth, setIsTelehealth] = useState(false);
   const [chiefComplaint, setChiefComplaint] = useState('Routine clinical consultation & review');
   const [patientQuery, setPatientQuery] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setDoctorId(presetDoctorId || doctors[0]?.id || '');
+    setDate(presetDate || new Date().toISOString().split('T')[0]);
+    setTimeSlot(presetTimeSlot || '10:00 AM');
+  }, [isOpen, presetDoctorId, presetDate, presetTimeSlot, doctors]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -73,12 +81,32 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
 
   const selectedPatient = patients.find((p) => p.id === patientId);
   const selectedDoc = doctors.find((d) => d.id === doctorId);
+  const dutyWindow = selectedDoc
+    ? getDoctorDutyWindow(selectedDoc, doctorDutySchedules, date)
+    : { isOnDuty: false, startTime: '', endTime: '' };
+  const dutySlots = getDutyAppointmentSlots(dutyWindow);
+  const availableDutySlots = dutySlots.filter((slot) => !appointments.some(
+    (appointment) =>
+      appointment.doctorId === selectedDoc?.id &&
+      appointment.date === date &&
+      appointment.timeSlot === slot &&
+      ['Scheduled', 'Checked-In', 'In Consultation'].includes(appointment.status)
+  ));
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!availableDutySlots.includes(timeSlot)) setTimeSlot(availableDutySlots[0] || '');
+  }, [isOpen, selectedDoc?.id, date, availableDutySlots.join('|')]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!selectedPatient || !selectedDoc) {
       addNotification('Selection Missing', 'Please select both a patient and an attending doctor.', 'warning');
+      return;
+    }
+    if (!dutyWindow.isOnDuty || !dutySlots.includes(timeSlot) || isSlotBooked(date, timeSlot)) {
+      addNotification('Duty Slot Unavailable', 'Choose an open time within the doctor’s published duty for this date.', 'warning');
       return;
     }
 
@@ -128,28 +156,6 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
 
   const formatISODate = (value: Date) => value.toISOString().split('T')[0];
 
-  const TIME_SLOTS = [
-    '08:00 AM',
-    '08:30 AM',
-    '09:00 AM',
-    '09:30 AM',
-    '10:00 AM',
-    '10:30 AM',
-    '11:00 AM',
-    '11:30 AM',
-    '12:00 PM',
-    '12:30 PM',
-    '01:00 PM',
-    '01:30 PM',
-    '02:00 PM',
-    '02:30 PM',
-    '03:00 PM',
-    '03:30 PM',
-    '04:00 PM',
-    '04:30 PM',
-    '05:00 PM',
-  ];
-
   const scheduleDates = Array.from({ length: 5 }, (_, index) => {
     const dateValue = addDays(new Date(), index);
     return {
@@ -161,7 +167,11 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
 
   const isSlotBooked = (slotDate: string, slotTime: string) =>
     appointments.some(
-      (appt) => appt.doctorId === selectedDoc?.id && appt.date === slotDate && appt.timeSlot === slotTime
+      (appt) =>
+        appt.doctorId === selectedDoc?.id &&
+        appt.date === slotDate &&
+        appt.timeSlot === slotTime &&
+        ['Scheduled', 'Checked-In', 'In Consultation'].includes(appt.status)
     );
 
   return (
@@ -272,86 +282,40 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-collapse text-[10px]">
-                  <thead>
-                    <tr>
-                      <th className="border border-slate-200 bg-slate-100 px-1.5 py-1 text-left font-bold text-slate-600">Time</th>
-                      {scheduleDates.map((day) => (
-                        <th key={day.value} className="border border-slate-200 bg-slate-100 px-1 py-1 text-center font-bold text-slate-600 min-w-[62px]">
-                          <div>{day.label}</div>
-                          <div className="text-[9px] text-slate-500">{day.subLabel}</div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {TIME_SLOTS.map((slot) => (
-                      <tr key={slot}>
-                        <td className="border border-slate-200 bg-slate-50 px-1.5 py-1 font-mono font-bold text-slate-700 whitespace-nowrap">{slot}</td>
-                        {scheduleDates.map((day) => {
-                          const slotBooked = isSlotBooked(day.value, slot);
-                          const isSelected = day.value === date && slot === timeSlot;
-
-                          return (
-                            <td key={`${day.value}-${slot}`} className="border border-slate-200 p-1 text-center">
-                              <button
-                                type="button"
-                                disabled={slotBooked}
-                                onClick={() => {
-                                  setDate(day.value);
-                                  setTimeSlot(slot);
-                                }}
-                                className={`w-full rounded px-1 py-1 text-[9px] font-bold transition ${
-                                  slotBooked
-                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                    : isSelected
-                                      ? 'bg-blue-600 text-white ring-1 ring-blue-700'
-                                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                }`}
-                              >
-                                {slotBooked ? 'Booked' : isSelected ? 'Selected' : 'Open'}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Selected Date
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2">
+                {scheduleDates.map((day) => (
+                  <button key={day.value} type="button" aria-pressed={date === day.value} onClick={() => setDate(day.value)} className={`min-w-16 rounded-md border px-2 py-1.5 text-center text-[10px] font-bold ${date === day.value ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                    <span className="block">{day.label}</span><span className="text-[9px] font-normal opacity-80">{day.subLabel}</span>
+                  </button>
+                ))}
+                <label className="ml-auto text-[10px] font-semibold text-slate-600">
+                  Date
+                  <input type="date" value={date} min={new Date().toISOString().slice(0, 10)} onChange={(event) => setDate(event.target.value)} className="ml-1 rounded border border-slate-300 px-2 py-1.5 text-[10px]" />
                 </label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                  required
-                />
               </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Consultation Time Slot
-                </label>
-                <select
-                  value={timeSlot}
-                  onChange={(e) => setTimeSlot(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  {TIME_SLOTS.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot}
-                    </option>
-                  ))}
-                </select>
+              <div className="mt-3 flex items-center justify-between gap-2 text-[10px]">
+                <span className="font-bold uppercase tracking-wide text-slate-500">Published duty</span>
+                {dutyWindow.isOnDuty ? (
+                  <span className="font-mono font-semibold text-emerald-800">{dutyWindow.startTime}–{dutyWindow.endTime}</span>
+                ) : (
+                  <span className="font-semibold text-rose-700">No duty scheduled</span>
+                )}
               </div>
+              {availableDutySlots.length > 0 ? (
+                <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {dutySlots.map((slot) => {
+                    const slotBooked = !availableDutySlots.includes(slot);
+                    const selected = timeSlot === slot;
+                    return (
+                      <button key={slot} type="button" disabled={slotBooked} aria-pressed={selected} onClick={() => setTimeSlot(slot)} className={`min-h-9 rounded-md border px-2 py-1.5 text-xs font-semibold ${slotBooked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-blue-700 bg-blue-700 text-white' : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`}>
+                        {slotBooked ? 'Booked' : slot}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No published duty shift for this doctor on this date. Select another day or contact administration.</p>
+              )}
             </div>
 
             <div>

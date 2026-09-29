@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Calendar,
   Clock,
@@ -13,9 +13,14 @@ import {
   User,
   Stethoscope,
   Video,
+  CalendarDays,
+  Ban,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
-import { DoctorDutySlotsTable } from './DoctorDutySlotsTable';
+import { Appointment } from '../types';
+import { getDoctorDutyWindow, getDutyAppointmentSlots } from '../utils/doctorDutySchedule';
 
 interface AppointmentsManagerProps {
   onOpenNewAppointment: (preset?: { doctorId?: string; date?: string; timeSlot?: string }) => void;
@@ -23,15 +28,34 @@ interface AppointmentsManagerProps {
   onStartTelehealth?: (patientId: string, doctorName?: string) => void;
 }
 
+const formatLocalDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   onOpenNewAppointment,
   onSelectPatient,
   onStartTelehealth,
 }) => {
+  const CANCELLATION_REASONS = [
+    'Patient request',
+    'Doctor unavailable',
+    'Rescheduled',
+    'Duplicate booking',
+    'Insurance or authorization issue',
+    'Other',
+  ];
   const {
     appointments,
+    doctors,
+    doctorDutySchedules,
     updateAppointmentStatus,
+    addAppointment,
     addNotification,
+    logAuditEvent,
     setActiveTab,
   } = useHospital();
 
@@ -39,9 +63,70 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('all');
-  const [showRosterTable, setShowRosterTable] = useState(true);
+  const [viewType, setViewType] = useState<'appointments' | 'doctor-slots'>('doctor-slots');
+  const [slotDepartment, setSlotDepartment] = useState('all');
+  const [slotDoctorId, setSlotDoctorId] = useState(doctors[0]?.id || '');
+  const [slotDate, setSlotDate] = useState(() => formatLocalDate(new Date()));
+  const [blockedSlots, setBlockedSlots] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('medcore_blocked_duty_slots_v1') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slot: string } | null>(null);
+  const [copiedAppointment, setCopiedAppointment] = useState<Appointment | null>(null);
+  const [cancellationTarget, setCancellationTarget] = useState<Appointment | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationDetails, setCancellationDetails] = useState('');
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem('medcore_blocked_duty_slots_v1', JSON.stringify(blockedSlots));
+  }, [blockedSlots]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) setContextMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('pointerdown', closeMenu);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeMenu);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [contextMenu]);
 
   const departmentOptions = Array.from(new Set(appointments.map((appointment) => appointment.department))).sort();
+  const doctorDepartmentOptions = Array.from(new Set(doctors.map((doctor) => doctor.department))).sort();
+  const doctorsForSlots = doctors.filter((doctor) => slotDepartment === 'all' || doctor.department === slotDepartment);
+  const slotDoctor = doctorsForSlots.find((doctor) => doctor.id === slotDoctorId) || doctorsForSlots[0];
+  const slotDutyWindow = slotDoctor
+    ? getDoctorDutyWindow(slotDoctor, doctorDutySchedules, slotDate)
+    : { isOnDuty: false, startTime: '', endTime: '' };
+  const doctorSlots = getDutyAppointmentSlots(slotDutyWindow);
+  const bookedSlotTimes = appointments
+    .filter((appointment) => appointment.doctorId === slotDoctor?.id && appointment.date === slotDate && ['Scheduled', 'Checked-In', 'In Consultation'].includes(appointment.status))
+    .map((appointment) => appointment.timeSlot);
+  const getSlotKey = (slot: string) => `${slotDoctor?.id || ''}|${slotDate}|${slot}`;
+  const isSlotBlocked = (slot: string) => blockedSlots.includes(getSlotKey(slot));
+  const getSlotAppointment = (slot: string) => appointments.find(
+    (appointment) => appointment.doctorId === slotDoctor?.id && appointment.date === slotDate && appointment.timeSlot === slot && ['Scheduled', 'Checked-In', 'In Consultation'].includes(appointment.status)
+  );
+  const slotDates = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date();
+    day.setDate(day.getDate() + index);
+    const value = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    return {
+      value,
+      label: index === 0 ? 'Today' : index === 1 ? 'Tomorrow' : day.toLocaleDateString('en-US', { weekday: 'short' }),
+      sublabel: day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    };
+  });
 
   const filteredAppointments = appointments.filter((a) => {
     const matchesSearch =
@@ -71,6 +156,70 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
     );
   };
 
+  const requestCancellation = (appointment: Appointment) => {
+    setCancellationTarget(appointment);
+    setCancellationReason('');
+    setCancellationDetails('');
+    setContextMenu(null);
+  };
+
+  const confirmCancellation = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!cancellationTarget || !cancellationReason) return;
+    if (cancellationReason === 'Other' && !cancellationDetails.trim()) return;
+    const details = cancellationReason === 'Other' ? cancellationDetails.trim() : undefined;
+    updateAppointmentStatus(cancellationTarget.id, 'Cancelled', { reason: cancellationReason, details });
+    addNotification(
+      'Appointment Cancelled',
+      `${cancellationTarget.patientName}'s appointment was cancelled. Reason: ${cancellationReason}${details ? ` · ${details}` : ''}`,
+      'warning',
+      cancellationTarget.id
+    );
+    setCancellationTarget(null);
+  };
+
+  const openSlotContextMenu = (event: React.MouseEvent, slot: string) => {
+    event.preventDefault();
+    const menuWidth = 220;
+    const menuHeight = 280;
+    setContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      slot,
+    });
+  };
+
+  const toggleSlotBlocked = (slot: string) => {
+    const key = getSlotKey(slot);
+    const wasBlocked = blockedSlots.includes(key);
+    setBlockedSlots((previous) => wasBlocked ? previous.filter((item) => item !== key) : [...previous, key]);
+    logAuditEvent('UPDATE', 'Appointment', key, `${wasBlocked ? 'Unblocked' : 'Blocked'} ${slotDoctor?.name || 'doctor'} slot ${slot} on ${slotDate}.`);
+    setContextMenu(null);
+  };
+
+  const pasteCopiedAppointment = (slot: string) => {
+    if (!copiedAppointment || !slotDoctor) return;
+    addAppointment({
+      patientId: copiedAppointment.patientId,
+      patientName: copiedAppointment.patientName,
+      patientAge: copiedAppointment.patientAge,
+      patientGender: copiedAppointment.patientGender,
+      doctorId: slotDoctor.id,
+      doctorName: slotDoctor.name,
+      department: slotDoctor.department,
+      roomNumber: slotDoctor.roomNumber,
+      date: slotDate,
+      timeSlot: slot,
+      type: copiedAppointment.isTelehealth ? 'General Consultation' : copiedAppointment.type,
+      status: 'Scheduled',
+      priority: copiedAppointment.priority,
+      reason: copiedAppointment.reason,
+      notes: copiedAppointment.notes,
+      isTelehealth: false,
+    });
+    setContextMenu(null);
+  };
+
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
       {/* Top Banner */}
@@ -90,40 +239,32 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
             </div>
           </div>
           <p className="text-xs text-slate-500 max-w-2xl">
-            Real-time outpatient check-in queue, physician duty roster allocations, and waiting room turnover tracking.
+            Real-time outpatient check-in queue, clinician bookings, and waiting room turnover tracking.
           </p>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setShowRosterTable(!showRosterTable)}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>{showRosterTable ? 'Hide Duty Roster' : 'Physician Duty Slots'}</span>
-          </button>
-          <button
-            onClick={() => onOpenNewAppointment()}
-            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ Book Slot</span>
-          </button>
+          <label className="text-[10px] font-bold uppercase text-slate-500">
+            View
+            <select aria-label="Appointment view type" value={viewType} onChange={(event) => setViewType(event.target.value as typeof viewType)} className="ml-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case text-slate-700">
+              <option value="appointments">Appointment list</option>
+              <option value="doctor-slots">Doctor slots</option>
+            </select>
+          </label>
+          {viewType === 'appointments' && (
+            <button
+              onClick={() => onOpenNewAppointment()}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Book Slot</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {showRosterTable && (
-        <div className="animate-in fade-in">
-          <DoctorDutySlotsTable
-            onBookSlot={(docId, date, timeSlot) => {
-              onOpenNewAppointment({ doctorId: docId, date, timeSlot });
-            }}
-          />
-        </div>
-      )}
-
       {/* Filter and Search Bar */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col sm:flex-row gap-3 items-center justify-between">
+      {viewType === 'appointments' && <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-80">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -180,10 +321,10 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
             title="Filter by consultation date"
           />
         </div>
-      </div>
+      </div>}
 
       {/* Appointments Data Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+      {viewType === 'appointments' && <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         <div className="p-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-blue-600" />
@@ -326,7 +467,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                       )}
                       {appt.status !== 'Completed' && appt.status !== 'Cancelled' && (
                         <button
-                          onClick={() => handleStatusChange(appt.id, 'Cancelled', appt.patientName)}
+                          onClick={() => requestCancellation(appt)}
                           className="px-2 py-1 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-700 rounded font-semibold text-[11px] cursor-pointer"
                         >
                           Cancel
@@ -339,7 +480,157 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
+
+      {viewType === 'doctor-slots' && (
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col justify-between gap-3 border-b border-slate-200 bg-slate-50/70 p-4 lg:flex-row lg:items-center">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-teal-800" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Doctor availability</h3>
+                <p className="text-[11px] text-slate-500">Choose a doctor and date to book an open duty slot.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:w-[32rem]">
+              <select aria-label="Filter doctors by department" value={slotDepartment} onChange={(event) => {
+                const department = event.target.value;
+                setSlotDepartment(department);
+                const firstDoctor = doctors.find((doctor) => department === 'all' || doctor.department === department);
+                if (firstDoctor) setSlotDoctorId(firstDoctor.id);
+              }} className="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800">
+                <option value="all">All departments</option>
+                {doctorDepartmentOptions.map((department) => <option key={department} value={department}>{department}</option>)}
+              </select>
+              <select aria-label="Choose doctor" value={slotDoctor?.id || ''} onChange={(event) => setSlotDoctorId(event.target.value)} className="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800">
+                {doctorsForSlots.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name} · {doctor.specialty}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                {slotDates.map((day) => (
+                  <button key={day.value} type="button" aria-pressed={slotDate === day.value} onClick={() => setSlotDate(day.value)} className={`min-w-16 rounded-md border px-2.5 py-1.5 text-center text-[10px] font-bold ${slotDate === day.value ? 'border-teal-800 bg-teal-800 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+                    <span className="block">{day.label}</span><span className="text-[9px] font-normal opacity-80">{day.sublabel}</span>
+                  </button>
+                ))}
+              </div>
+              <label className="text-[10px] font-semibold text-slate-600">
+                Choose date
+                <input type="date" min={formatLocalDate(new Date())} value={slotDate} onChange={(event) => setSlotDate(event.target.value)} className="ml-1.5 rounded-md border border-slate-300 px-2 py-1.5 text-xs" />
+              </label>
+            </div>
+
+            {slotDoctor ? (
+              <>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900">{slotDoctor.name}</p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">{slotDoctor.specialty} · {slotDoctor.department}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold uppercase text-slate-500">Published duty</p>
+                    <p className={`mt-0.5 text-xs font-semibold ${slotDutyWindow.isOnDuty ? 'text-emerald-800' : 'text-rose-700'}`}>
+                      {slotDutyWindow.isOnDuty ? `${slotDutyWindow.startTime}–${slotDutyWindow.endTime}` : 'Off duty'}
+                    </p>
+                  </div>
+                </div>
+                {doctorSlots.length === 0 ? (
+                  <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-xs text-amber-900">No duty is scheduled for this doctor on {slotDate}.</p>
+                ) : (
+                  <div className="mt-4">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-slate-800">Available time slots</h4>
+                      <span className="text-[10px] text-slate-500">{doctorSlots.filter((slot) => !bookedSlotTimes.includes(slot)).length} open</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                      {doctorSlots.map((slot) => {
+                        const booked = bookedSlotTimes.includes(slot);
+                        const blocked = isSlotBlocked(slot);
+                        return (
+                          <div key={slot} className="relative" onContextMenu={(event) => openSlotContextMenu(event, slot)}>
+                            <button type="button" aria-disabled={booked || blocked} onClick={() => { if (!booked && !blocked) onOpenNewAppointment({ doctorId: slotDoctor.id, date: slotDate, timeSlot: slot }); }} className={`min-h-10 w-full rounded-md border px-2 py-2 text-xs font-semibold transition ${booked || blocked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-400 hover:bg-emerald-100'}`}>
+                              {booked ? `${slot} · Booked` : blocked ? `${slot} · Blocked` : slot}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">No doctors are available for this department.</p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {contextMenu && slotDoctor && (() => {
+        const appointment = getSlotAppointment(contextMenu.slot);
+        const blocked = isSlotBlocked(contextMenu.slot);
+        const slotIsBookable = !appointment && !blocked;
+        const menuActionClass = 'flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40';
+        return (
+          <div ref={contextMenuRef} role="menu" aria-label={`${contextMenu.slot} appointment slot actions`} style={{ left: contextMenu.x, top: contextMenu.y }} onContextMenu={(event) => event.preventDefault()} className="fixed z-50 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
+            <div className="border-b border-slate-100 px-3 py-2">
+              <p className="text-xs font-bold text-slate-900">{contextMenu.slot}</p>
+              <p className="truncate text-[10px] text-slate-500">{slotDoctor.name} · {slotDate}</p>
+            </div>
+            <button role="menuitem" type="button" disabled={!slotIsBookable} onClick={() => { onOpenNewAppointment({ doctorId: slotDoctor.id, date: slotDate, timeSlot: contextMenu.slot }); setContextMenu(null); }} className={menuActionClass}>
+              <Plus className="h-3.5 w-3.5 text-teal-700" /> Book
+            </button>
+            <button role="menuitem" type="button" disabled={!appointment} onClick={() => appointment && requestCancellation(appointment)} className={`${menuActionClass} text-rose-700`}>
+              <XCircle className="h-3.5 w-3.5" /> Cancel
+            </button>
+            <button role="menuitem" type="button" disabled={!appointment} onClick={() => { if (appointment) setCopiedAppointment(appointment); setContextMenu(null); }} className={menuActionClass}>
+              <Copy className="h-3.5 w-3.5 text-blue-700" /> Copy
+            </button>
+            <button role="menuitem" type="button" disabled={!copiedAppointment || !slotIsBookable} onClick={() => pasteCopiedAppointment(contextMenu.slot)} className={menuActionClass}>
+              <ClipboardPaste className="h-3.5 w-3.5 text-blue-700" /> Paste
+            </button>
+            <button role="menuitem" type="button" disabled={Boolean(appointment)} onClick={() => {
+              const key = getSlotKey(contextMenu.slot);
+              const wasBlocked = blockedSlots.includes(key);
+              setBlockedSlots((previous) => wasBlocked ? previous.filter((item) => item !== key) : [...previous, key]);
+              logAuditEvent('UPDATE', 'Appointment', key, `${wasBlocked ? 'Unblocked' : 'Blocked'} ${slotDoctor.name} slot ${contextMenu.slot} on ${slotDate}.`);
+              setContextMenu(null);
+            }} className={menuActionClass}>
+              <Ban className="h-3.5 w-3.5 text-amber-700" /> {blocked ? 'Unblock' : 'Block'}
+            </button>
+          </div>
+        );
+      })()}
+
+      {cancellationTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4">
+          <form onSubmit={confirmCancellation} className="w-full max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Cancel appointment</h3>
+              <p className="mt-1 text-xs text-slate-600">{cancellationTarget.patientName} · {cancellationTarget.doctorName} · {cancellationTarget.date} {cancellationTarget.timeSlot}</p>
+            </div>
+            <label className="block text-xs font-semibold text-slate-700">
+              Cancellation reason
+              <select required value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal">
+                <option value="">Select a reason</option>
+                {CANCELLATION_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+              </select>
+            </label>
+            {cancellationReason === 'Other' && (
+              <label className="block text-xs font-semibold text-slate-700">
+                Additional details
+                <textarea required value={cancellationDetails} onChange={(event) => setCancellationDetails(event.target.value)} rows={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+              </label>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setCancellationTarget(null)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Keep appointment</button>
+              <button type="submit" disabled={!cancellationReason || (cancellationReason === 'Other' && !cancellationDetails.trim())} className="rounded-md bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-50">Confirm cancellation</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

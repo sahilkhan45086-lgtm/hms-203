@@ -99,7 +99,9 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
   const settledPosCount = posTransactions.filter((p) => p.status.includes('Settled') || p.status.includes('Approved')).length;
 
   // Insurance Approval Totals
-  const totalApprovedPreAuth = insuranceApprovals.reduce((sum, i) => sum + i.approvedAmount, 0);
+  const totalApprovedPreAuth = insuranceApprovals
+    .filter((approval) => approval.approvalStatus === 'Approved')
+    .reduce((sum, approval) => sum + approval.approvedAmount, 0);
 
   const handlePrint = () => {
     window.print();
@@ -565,6 +567,8 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
                               ? 'bg-emerald-100 text-emerald-800'
                               : appr.approvalStatus === 'Pending'
                               ? 'bg-amber-100 text-amber-800'
+                              : appr.approvalStatus === 'Query Raised'
+                              ? 'bg-orange-100 text-orange-800'
                               : 'bg-rose-100 text-rose-800'
                           }`}
                         >

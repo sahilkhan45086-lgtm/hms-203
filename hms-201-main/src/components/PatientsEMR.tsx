@@ -4,9 +4,6 @@ import {
   Search,
   Plus,
   Activity,
-  Heart,
-  Thermometer,
-  Wind,
   Pill,
   FileText,
   AlertTriangle,
@@ -19,9 +16,11 @@ import {
   Stethoscope,
   Clock,
   Send,
+  ShieldCheck,
+  CircleDollarSign,
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
-import { Patient, Prescription, ClinicalNote } from '../types';
+import { Patient, Prescription, ClinicalNote, PatientService, InsuranceApproval } from '../types';
 import { ICD10_COMMON_CODES } from '../data/icd10Codes';
 import { PatientDashboard } from './PatientDashboard';
 import { PatientDiagnosticReportsView } from './reports/PatientDiagnosticReportsView';
@@ -40,16 +39,19 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
     selectedPatientId,
     setSelectedPatientId,
     updatePatientStatus,
+    updatePatient,
     addClinicalNote,
     addPrescription,
     addNotification,
+    insuranceApprovals,
+    addInsuranceApproval,
     currentUser,
     currentRole,
   } = useHospital();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [patientViewTab, setPatientViewTab] = useState<'dashboard' | 'previous' | 'notes' | 'prescriptions' | 'reports' | 'all'>('dashboard');
+  const [patientViewTab, setPatientViewTab] = useState<'dashboard' | 'previous' | 'notes' | 'prescriptions' | 'services' | 'reports' | 'all'>('dashboard');
 
   // New Note Form State
   const [chiefComplaint, setChiefComplaint] = useState('');
@@ -66,6 +68,10 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
   const [rxRoute, setRxRoute] = useState('Oral');
   const [rxDuration, setRxDuration] = useState('');
   const [rxInstructions, setRxInstructions] = useState('');
+  const [serviceName, setServiceName] = useState('');
+  const [serviceCategory, setServiceCategory] = useState<InsuranceApproval['serviceCategory']>('Procedure');
+  const [serviceCode, setServiceCode] = useState('');
+  const [serviceCost, setServiceCost] = useState('');
 
   const normalizeClinicianName = (name: string) =>
     name.toLowerCase().replace(/^dr\.?\s*/, '').replace(/,?\s*(md|facs|do|phd)\b/g, '').replace(/[.,]/g, '').trim();
@@ -107,6 +113,8 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
             .join(' · '),
           status: m.status,
         }))) || [];
+  const patientServices = selectedPatient?.services || [];
+  const patientServiceApprovals = insuranceApprovals.filter((approval) => approval.patientId === selectedPatient?.id);
 
   const filteredPatients = assignedPatients.filter((p) => {
     const matchesSearch =
@@ -164,6 +172,58 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
     setIsAddingRx(false);
   };
 
+  const handleAddService = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedPatient || !serviceName.trim() || Number(serviceCost) <= 0) return;
+    const service: PatientService = {
+      id: `SRV-${Date.now()}`,
+      name: serviceName.trim(),
+      category: serviceCategory,
+      serviceCode: serviceCode.trim() || undefined,
+      estimatedCost: Number(serviceCost),
+      addedAt: new Date().toISOString(),
+      addedBy: currentUser.name,
+    };
+    updatePatient(selectedPatient.id, { services: [...patientServices, service] });
+    addNotification('Patient Service Added', `${service.name} added to ${selectedPatient.firstName} ${selectedPatient.lastName}'s record.`, 'info', selectedPatient.id);
+    setServiceName('');
+    setServiceCode('');
+    setServiceCost('');
+  };
+
+  const handleRequestServiceAuthorization = (service: PatientService) => {
+    const existingApproval = insuranceApprovals.find((approval) => approval.id === service.insuranceApprovalId);
+    if (!selectedPatient || (existingApproval && existingApproval.approvalStatus !== 'Rejected')) return;
+    const requestDate = new Date().toISOString().slice(0, 10);
+    const request = addInsuranceApproval({
+      patientId: selectedPatient.id,
+      patientName: `${selectedPatient.firstName} ${selectedPatient.lastName}`,
+      patientMrn: selectedPatient.id,
+      insuranceProvider: selectedPatient.insurance.provider,
+      policyNumber: selectedPatient.insurance.policyNumber,
+      approvalNumber: `REQ-${Date.now()}`,
+      doctorId: selectedPatient.primaryPhysicianId,
+      doctorName: currentUser.name,
+      department: currentUser.department,
+      serviceCategory: service.category,
+      serviceName: service.name,
+      serviceCode: service.serviceCode,
+      estimatedCost: service.estimatedCost,
+      approvedAmount: 0,
+      copayPercentage: 0,
+      copayAmount: 0,
+      approvalStatus: 'Pending',
+      approvalDate: requestDate,
+      validUntil: '',
+      authorisedBy: currentUser.name,
+      remarks: 'Requested by attending physician; awaiting medical coder review.',
+      serviceRecordId: service.id,
+    });
+    updatePatient(selectedPatient.id, {
+      services: patientServices.map((item) => item.id === service.id ? { ...item, insuranceApprovalId: request.id } : item),
+    });
+  };
+
   const handlePrintChart = () => {
     window.print();
   };
@@ -183,77 +243,63 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
   }
 
   return (
-    <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
-      {/* Top Banner */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="mx-auto max-w-[1500px] space-y-4 p-3 sm:p-4 lg:p-5">
+      <header className="flex items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-              <Users className="w-4 h-4" />
-            </div>
-            <h2 className="text-base font-bold text-slate-900 tracking-tight">
-              Electronic Medical Records (EMR) & Clinical Encounters
-            </h2>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-bold uppercase">
-              HL7 FHIR v4.0 COMPLIANT
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 max-w-2xl">
-            Real-time longitudinal medical records, vital signs telemetry, ICD-10 diagnostic coding, and computerized physician order entry (CPOE).
-          </p>
+          <p className="text-[10px] font-bold uppercase text-teal-700">Clinical workspace</p>
+          <h2 className="text-lg font-bold text-slate-950">Patient records</h2>
         </div>
+        <button
+          type="button"
+          onClick={handlePrintChart}
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+          title="Print selected patient's chart"
+        >
+          <Printer className="h-4 w-4" />
+          <span className="hidden sm:inline">Print chart</span>
+        </button>
+      </header>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handlePrintChart}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print Chart</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
         {/* Left Column: Patient Registry List */}
-        <div className="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col max-h-[820px]">
-          <div className="mb-3 px-1">
-            <h3 className="text-sm font-bold text-slate-900">
-              {currentRole === 'doctor' ? 'My Patient List' : 'Patient Registry'}
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              {currentRole === 'doctor'
-                ? `${filteredPatients.length} patient${filteredPatients.length === 1 ? '' : 's'} assigned to ${currentUser.name}`
-                : `${filteredPatients.length} patients in the hospital registry`}
-            </p>
+        <aside className="flex max-h-72 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:sticky lg:top-3 lg:col-span-3 lg:max-h-[calc(100vh-12rem)] lg:self-start">
+          <div className="border-b border-slate-200 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-slate-900">My patients</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{filteredPatients.length}</span>
+            </div>
+            <p className="mt-0.5 text-[11px] text-slate-500">Assigned to {currentUser.name}</p>
           </div>
 
           {/* Search and Filter */}
-          <div className="space-y-2 mb-3">
+          <div className="space-y-2 border-b border-slate-100 p-3">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search patient name, MRN, phone..."
+                aria-label="Search patients by name, medical record number, or phone"
+                placeholder="Search name, MRN, or phone"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-lg py-1.5 pl-8 pr-3 text-xs focus:ring-2 focus:ring-blue-500/20 text-slate-900"
+                className="w-full rounded-md border border-slate-300 bg-white py-2 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
               />
             </div>
 
-            <div className="flex items-center gap-1 overflow-x-auto pb-1">
+            <div className="grid grid-cols-2 gap-1" role="group" aria-label="Filter patients by care status">
               {[
                 { id: 'all', label: 'All' },
                 { id: 'inpatient', label: 'Inpatient' },
                 { id: 'outpatient', label: 'Outpatient' },
-                { id: 'emergency', label: 'ER STAT' },
+                { id: 'emergency', label: 'Emergency' },
               ].map((tab) => (
                 <button
                   key={tab.id}
+                  type="button"
+                  aria-pressed={statusFilter === tab.id}
                   onClick={() => setStatusFilter(tab.id)}
-                  className={`px-2 py-1 text-[11px] rounded font-semibold transition cursor-pointer ${
+                  className={`min-h-8 rounded-md px-2 text-[11px] font-semibold transition ${
                     statusFilter === tab.id
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-teal-800 text-white'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
@@ -264,7 +310,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
           </div>
 
           {/* Patient Cards List */}
-          <div className="overflow-y-auto divide-y divide-slate-100 flex-1 space-y-1">
+          <div className="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto px-2">
             {filteredPatients.length === 0 ? (
               <div className="px-3 py-8 text-center text-xs text-slate-500">
                 {currentRole === 'doctor' && assignedPatients.length === 0
@@ -274,25 +320,26 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
             ) : filteredPatients.map((p) => {
               const isSelected = p.id === selectedPatient?.id;
               return (
-                <div
+                <button
                   key={p.id}
+                  type="button"
+                  aria-pressed={isSelected}
                   onClick={() => {
                     setSelectedPatientId(p.id);
                     setPatientViewTab('dashboard');
                   }}
-                  className={`p-3 rounded-lg cursor-pointer transition flex items-center justify-between ${
+                  className={`flex w-full items-center justify-between gap-2 border-l-2 p-3 text-left transition ${
                     isSelected
-                      ? 'bg-blue-50 border border-blue-200 text-blue-900'
-                      : 'hover:bg-slate-50 text-slate-700 border border-transparent'
+                      ? 'border-l-teal-700 bg-teal-50 text-teal-950'
+                      : 'border-l-transparent text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   <div className="min-w-0 pr-2">
                     <div className="font-bold text-xs truncate flex items-center gap-1.5">
                       <span>{p.firstName} {p.lastName}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">({p.id})</span>
                     </div>
-                    <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                      {p.age}y · {p.gender} · Blood: {p.bloodGroup} · {p.primaryPhysicianName}
+                    <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                      {p.id} · {p.age}y · {p.gender}
                     </div>
                     {p.latestTriage && (
                       <div className="text-[10px] mt-1 font-semibold flex items-center gap-1">
@@ -322,33 +369,97 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   >
                     {p.status}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
-        </div>
+        </aside>
 
         {/* Right Column: Detailed Patient EMR Dossier */}
         {selectedPatient ? (
-          <div className="lg:col-span-8 space-y-4">
+          <div className="min-w-0 space-y-3 lg:col-span-9">
+            <section aria-label="Selected patient summary" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-start">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-teal-100 text-sm font-bold text-teal-900">
+                    {`${selectedPatient.firstName[0] || ''}${selectedPatient.lastName[0] || ''}`}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <h1 className="truncate text-lg font-bold text-slate-950">{selectedPatient.firstName} {selectedPatient.lastName}</h1>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-700">{selectedPatient.id}</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-600">{selectedPatient.age} years · {selectedPatient.gender} · DOB {selectedPatient.dob}</p>
+                    <p className="mt-1 truncate text-[11px] text-slate-500">Attending: {selectedPatient.primaryPhysicianName} · {selectedPatient.insurance.provider || 'Self-pay'}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${selectedPatient.status === 'Emergency' ? 'bg-rose-100 text-rose-800' : selectedPatient.status === 'Inpatient' ? 'bg-blue-100 text-blue-800' : selectedPatient.status === 'Discharged' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-800'}`}>
+                    {selectedPatient.status}
+                  </span>
+                  <button type="button" onClick={() => onOpenTriageModal(selectedPatient.id)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-200 px-2.5 text-[11px] font-semibold text-rose-800 hover:bg-rose-50">
+                    <Activity className="h-3.5 w-3.5" /> Triage
+                  </button>
+                  <button type="button" onClick={() => onStartTelehealth(selectedPatient.id)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                    <Video className="h-3.5 w-3.5" /> Telehealth
+                  </button>
+                  <label className="sr-only" htmlFor="patient-emr-status">Patient status</label>
+                  <select
+                    id="patient-emr-status"
+                    aria-label="Update patient status"
+                    value={selectedPatient.status}
+                    onChange={(event) => updatePatientStatus(selectedPatient.id, event.target.value as Patient['status'])}
+                    className="h-8 rounded-md border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700"
+                  >
+                    <option value="Outpatient">Outpatient</option>
+                    <option value="Inpatient">Inpatient</option>
+                    <option value="Emergency">Emergency</option>
+                    <option value="Discharged">Discharged</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 border-t border-slate-100 bg-slate-50/70 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ShieldAlert className={`h-4 w-4 shrink-0 ${patientAllergies.length ? 'text-rose-600' : 'text-emerald-600'}`} />
+                  <span className="shrink-0 text-[10px] font-bold uppercase text-slate-600">Allergies</span>
+                  <span className={`truncate text-xs ${patientAllergies.length ? 'font-semibold text-rose-800' : 'text-slate-600'}`}>
+                    {patientAllergies.length ? patientAllergies.map((allergy) => typeof allergy === 'string' ? allergy : allergy.allergen).join(', ') : 'None recorded'}
+                  </span>
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <Activity className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                  <span className="shrink-0 text-[10px] font-bold uppercase text-slate-600">Conditions</span>
+                  <span className="truncate text-xs text-slate-700">{patientConditions.length ? patientConditions.join(', ') : 'None recorded'}</span>
+                </div>
+              </div>
+              <dl className="grid grid-cols-2 divide-y divide-slate-100 border-t border-slate-100 sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+                <div className="p-3"><dt className="text-[10px] font-semibold uppercase text-slate-500">Blood pressure</dt><dd className="mt-1 font-mono text-sm font-bold text-slate-900">{latestVitals ? `${latestVitals.bloodPressureSys}/${latestVitals.bloodPressureDia}` : 'Not recorded'}</dd></div>
+                <div className="p-3"><dt className="text-[10px] font-semibold uppercase text-slate-500">Pulse</dt><dd className="mt-1 font-mono text-sm font-bold text-slate-900">{latestVitals ? `${latestVitals.heartRate} bpm` : 'Not recorded'}</dd></div>
+                <div className="p-3"><dt className="text-[10px] font-semibold uppercase text-slate-500">Oxygen</dt><dd className="mt-1 font-mono text-sm font-bold text-slate-900">{latestVitals ? `${latestVitals.spO2}%` : 'Not recorded'}</dd></div>
+                <div className="p-3"><dt className="text-[10px] font-semibold uppercase text-slate-500">Temperature</dt><dd className="mt-1 font-mono text-sm font-bold text-slate-900">{latestVitals ? `${latestVitals.temperature}°F` : 'Not recorded'}</dd></div>
+                <div className="p-3"><dt className="text-[10px] font-semibold uppercase text-slate-500">Respiratory rate</dt><dd className="mt-1 font-mono text-sm font-bold text-slate-900">{latestVitals ? `${latestVitals.respiratoryRate}/min` : 'Not recorded'}</dd></div>
+              </dl>
+            </section>
+
             {/* EMR Sub-Navigation Tabs */}
-            <div className="flex items-center justify-between gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs overflow-x-auto">
-              <div className="flex items-center gap-1.5 flex-wrap">
+            <nav aria-label="Patient record sections" className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm [&>button]:shrink-0 [&>button]:whitespace-nowrap">
                 <button
                   type="button"
+              aria-pressed={patientViewTab === 'dashboard'}
                   onClick={() => setPatientViewTab('dashboard')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'dashboard'
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-teal-800 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   <Activity className="w-3.5 h-3.5" />
-                  <span>Patient Dashboard</span>
+                  <span>Overview</span>
                 </button>
 
                 <button
                   type="button"
+                  aria-pressed={patientViewTab === 'previous'}
                   onClick={() => setPatientViewTab('previous')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'previous'
@@ -357,37 +468,54 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   }`}
                 >
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Previous EMR ({patientVisits.length + patientNotes.length})</span>
+                  <span>History ({patientVisits.length + patientNotes.length})</span>
                 </button>
 
                 <button
                   type="button"
+                  aria-pressed={patientViewTab === 'notes'}
                   onClick={() => setPatientViewTab('notes')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'notes'
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-teal-800 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Clinical Notes ({patientNotes.length})</span>
+                  <span>Notes ({patientNotes.length})</span>
                 </button>
 
                 <button
                   type="button"
+                  aria-pressed={patientViewTab === 'prescriptions'}
                   onClick={() => setPatientViewTab('prescriptions')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'prescriptions'
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-teal-800 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   <Pill className="w-3.5 h-3.5" />
-                  <span>Prescriptions ({patientPrescriptions.length})</span>
+                  <span>Meds ({patientPrescriptions.length})</span>
                 </button>
 
                 <button
                   type="button"
+                  aria-pressed={patientViewTab === 'services'}
+                  onClick={() => setPatientViewTab('services')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    patientViewTab === 'services'
+                      ? 'bg-teal-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                >
+                  <CircleDollarSign className="w-3.5 h-3.5" />
+                  <span>Services ({patientServices.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  aria-pressed={patientViewTab === 'reports'}
                   onClick={() => setPatientViewTab('reports')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'reports'
@@ -396,28 +524,99 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   }`}
                 >
                   <FlaskConical className="w-3.5 h-3.5" />
-                  <span>Diagnostic Reports ({selectedPatient?.labResults?.length || 0})</span>
+                  <span>Reports ({selectedPatient?.labResults?.length || 0})</span>
                 </button>
 
                 <button
                   type="button"
+                  aria-pressed={patientViewTab === 'all'}
                   onClick={() => setPatientViewTab('all')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     patientViewTab === 'all'
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-teal-800 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  <span>Full Record</span>
+                  <span>Full chart</span>
                 </button>
-              </div>
+            </nav>
 
-              <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-500 pr-2 shrink-0">
-                <span className="font-semibold text-slate-800">{selectedPatient.firstName} {selectedPatient.lastName}</span>
-                <span className="text-slate-300">|</span>
-                <span className="text-blue-600 font-bold">{selectedPatient.id}</span>
-              </div>
-            </div>
+            {patientViewTab === 'services' && (
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-4 flex flex-col justify-between gap-2 border-b border-slate-100 pb-3 sm:flex-row sm:items-center">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Patient Services</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Add a service, then request insurance authorization for coder review.</p>
+                  </div>
+                  <span className="text-xs text-slate-500">{patientServices.length} services</span>
+                </div>
+
+                <form onSubmit={handleAddService} className="mb-4 grid grid-cols-1 gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <label className="text-[11px] font-semibold text-slate-700 sm:col-span-2 xl:col-span-1">
+                    Service name
+                    <input required value={serviceName} onChange={(event) => setServiceName(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal" placeholder="e.g. MRI Knee" />
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-700">
+                    Category
+                    <select value={serviceCategory} onChange={(event) => setServiceCategory(event.target.value as InsuranceApproval['serviceCategory'])} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal">
+                      {(['Procedure', 'Lab Test', 'Radiology', 'Consultation', 'IPD Admission'] as const).map((category) => <option key={category} value={category}>{category}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-700">
+                    Service code
+                    <input value={serviceCode} onChange={(event) => setServiceCode(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal" placeholder="Optional" />
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-700">
+                    Estimated cost ($)
+                    <input required type="number" min="0.01" step="0.01" value={serviceCost} onChange={(event) => setServiceCost(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal" />
+                  </label>
+                  <div className="flex items-end sm:col-span-2 xl:col-span-1">
+                    <button type="submit" className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">
+                      <Plus className="h-3.5 w-3.5" /> Add service
+                    </button>
+                  </div>
+                </form>
+
+                {patientServices.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-8 text-center text-xs text-slate-500">No services have been added to this patient record.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {[...patientServices].reverse().map((service) => {
+                      const approval = patientServiceApprovals.find((item) => item.id === service.insuranceApprovalId);
+                      return (
+                        <article key={service.id} className="flex flex-col justify-between gap-3 py-3 sm:flex-row sm:items-center">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-xs font-bold text-slate-900">{service.name}</h4>
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{service.category}</span>
+                              {service.serviceCode && <span className="font-mono text-[10px] text-slate-500">{service.serviceCode}</span>}
+                            </div>
+                            <p className="mt-1 text-[11px] text-slate-600">Estimated ${service.estimatedCost.toFixed(2)} · Added by {service.addedBy} · {new Date(service.addedAt).toLocaleDateString()}</p>
+                            {approval && <p className="mt-1 text-[10px] text-slate-500">{approval.approvalNumber} · {approval.insuranceProvider}{approval.remarks ? ` · ${approval.remarks}` : ''}</p>}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {approval && approval.approvalStatus !== 'Rejected' ? (
+                              <span className={`rounded border px-2.5 py-1 text-[10px] font-bold ${
+                                approval.approvalStatus === 'Approved' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' :
+                                approval.approvalStatus === 'Pending' ? 'border-amber-200 bg-amber-50 text-amber-800' :
+                                approval.approvalStatus === 'Query Raised' ? 'border-orange-200 bg-orange-50 text-orange-800' :
+                                'border-rose-200 bg-rose-50 text-rose-800'
+                              }`}>
+                                {approval.approvalStatus}
+                              </span>
+                            ) : (
+                              <button type="button" onClick={() => handleRequestServiceAuthorization(service)} className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100">
+                                <ShieldCheck className="h-3.5 w-3.5" /> {approval ? 'Request again' : 'Request authorization'}
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* TAB 1: PATIENT DASHBOARD (Health Trends, Lab Results, Upcoming Appointments) */}
             {(patientViewTab === 'dashboard' || patientViewTab === 'all') && (
@@ -730,158 +929,6 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   </div>
                 </div>
               </section>
-            )}
-
-            {/* Dedicated Header for Notes and Prescriptions standalone tabs */}
-            {patientViewTab !== 'dashboard' && patientViewTab !== 'previous' && patientViewTab !== 'all' && (
-              <>
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 font-bold text-sm flex items-center justify-center font-mono">
-                        {selectedPatient.bloodGroup}
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                          <span>{selectedPatient.firstName} {selectedPatient.lastName}</span>
-                          <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 font-bold">
-                            {selectedPatient.id}
-                          </span>
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          DOB: {selectedPatient.dob} ({selectedPatient.age}y) · {selectedPatient.gender} · Phone: {selectedPatient.phone}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => onOpenTriageModal(selectedPatient.id)}
-                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Activity className="w-3.5 h-3.5" />
-                        <span>Intake Triage</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onStartTelehealth(selectedPatient.id)}
-                        className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Video className="w-3.5 h-3.5" />
-                        <span>Telehealth</span>
-                      </button>
-
-                      <select
-                        value={selectedPatient.status}
-                        onChange={(e) => updatePatientStatus(selectedPatient.id, e.target.value as any)}
-                        className="bg-slate-50 border border-slate-300 rounded-lg py-1 px-2 text-xs font-bold text-slate-700"
-                      >
-                        <option value="Outpatient">Outpatient</option>
-                        <option value="Inpatient">Inpatient</option>
-                        <option value="Emergency">Emergency</option>
-                        <option value="Discharged">Discharged</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Vitals Telemetry Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 text-xs">
-                    <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1">
-                        <Activity className="w-3 h-3 text-blue-500" /> BP (mmHg)
-                      </span>
-                      <span className="font-bold text-slate-900 font-mono text-sm block mt-0.5">
-                        {latestVitals ? `${latestVitals.bloodPressureSys}/${latestVitals.bloodPressureDia}` : 'Not recorded'}
-                      </span>
-                    </div>
-
-                    <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1">
-                        <Heart className="w-3 h-3 text-rose-500" /> Pulse (BPM)
-                      </span>
-                      <span className="font-bold text-slate-900 font-mono text-sm block mt-0.5">
-                        {latestVitals ? latestVitals.heartRate : 'Not recorded'}
-                      </span>
-                    </div>
-
-                    <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1">
-                        <Wind className="w-3 h-3 text-sky-500" /> SpO2 (%)
-                      </span>
-                      <span className="font-bold text-slate-900 font-mono text-sm block mt-0.5">
-                        {latestVitals ? `${latestVitals.spO2}%` : 'Not recorded'}
-                      </span>
-                    </div>
-
-                    <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1">
-                        <Thermometer className="w-3 h-3 text-amber-500" /> Temp (°F)
-                      </span>
-                      <span className="font-bold text-slate-900 font-mono text-sm block mt-0.5">
-                        {latestVitals ? `${latestVitals.temperature}°F` : 'Not recorded'}
-                      </span>
-                    </div>
-
-                    <div className="p-2 bg-slate-50 rounded border border-slate-100 col-span-2 sm:col-span-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Resp. Rate</span>
-                      <span className="font-bold text-slate-900 font-mono text-sm block mt-0.5">
-                        {latestVitals ? `${latestVitals.respiratoryRate} /min` : 'Not recorded'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Allergies & Chronic Conditions */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 space-y-1.5">
-                    <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                      <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
-                      <span>Drug & Environmental Allergies</span>
-                    </h4>
-                    <div className="flex flex-wrap gap-1">
-                      {patientAllergies.length > 0 ? (
-                        patientAllergies.map((a, idx) => {
-                          const label = typeof a === 'string' ? a : `${a.allergen}${a.severity ? ` (${a.severity})` : ''}`;
-                          const key = typeof a === 'string' ? `${a}-${idx}` : `${a.allergen}-${idx}`;
-                          return (
-                            <span
-                              key={key}
-                              className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold text-[11px]"
-                            >
-                              {label}
-                            </span>
-                          );
-                        })
-                      ) : (
-                        <span className="text-slate-400">No known drug allergies (NKDA)</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 space-y-1.5">
-                    <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                      <Activity className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Documented Chronic Conditions</span>
-                    </h4>
-                    <div className="flex flex-wrap gap-1">
-                      {patientConditions.length > 0 ? (
-                        patientConditions.map((c, idx) => (
-                          <span
-                            key={`${c}-${idx}`}
-                            className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-medium text-[11px]"
-                          >
-                            {c}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-slate-400">No chronic conditions listed</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </>
             )}
 
             {/* TAB 2: Clinical Encounter & Physician Progress Notes */}

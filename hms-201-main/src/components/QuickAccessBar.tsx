@@ -22,6 +22,7 @@ import {
   Pill,
   Clock,
   Sparkles,
+  FileCheck2,
 } from 'lucide-react';
 import { useHospital, NavigationTab } from '../context/HospitalContext';
 import { getThemeClasses, normalizeTheme } from '../utils/theme';
@@ -78,6 +79,12 @@ export const QuickAccessBar: React.FC<QuickAccessBarProps> = ({
     NavigationTab,
     { category: string; title: string; subtitle: string; icon: React.ElementType }
   > = {
+    registration: {
+      category: 'Reception Desk Portal',
+      title: 'Patient Registration',
+      subtitle: 'Patient demographic intake and registration records',
+      icon: UserPlus,
+    },
     overview: {
       category: 'Clinical Services',
       title: 'Operations Dashboard',
@@ -131,6 +138,12 @@ export const QuickAccessBar: React.FC<QuickAccessBarProps> = ({
       title: 'Diagnostic Laboratory',
       subtitle: 'Pathology findings, reference ranges, specimen turnaround, and critical alerts',
       icon: FlaskConical,
+    },
+    coder: {
+      category: 'Diagnostics & Pharmacy',
+      title: 'Medical Coder Desk',
+      subtitle: 'Insurance authorization review and patient report publication',
+      icon: FileCheck2,
     },
     radiology: {
       category: 'Diagnostics & Pharmacy',

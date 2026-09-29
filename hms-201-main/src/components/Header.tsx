@@ -22,6 +22,7 @@ import {
   ChevronDown,
   UserCheck,
   Check,
+  FileCheck2,
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
 import { getThemeClasses, THEME_OPTIONS, normalizeTheme } from '../utils/theme';
@@ -161,6 +162,12 @@ export const Header: React.FC<HeaderProps> = ({
       title: 'Pharmacist',
       desc: 'Formulary dispensing, medicine inventory, billing',
       icon: ReceiptText,
+    },
+    {
+      role: 'medical-coder',
+      title: 'Medical Coder',
+      desc: 'Insurance authorization review and patient report publishing',
+      icon: FileCheck2,
     },
   ];
 

@@ -72,6 +72,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       color: 'border-slate-500 bg-slate-50/50 text-slate-900',
       tag: 'Executive Access',
     },
+    {
+      id: 'STF-08',
+      name: 'Morgan Ellis, RHIT',
+      role: 'Medical Coder',
+      dept: 'Medical Coding & Insurance Review',
+      pass: 'coder123',
+      color: 'border-teal-500 bg-teal-50/50 text-teal-900',
+      tag: 'Insurance & Report Publishing',
+    },
   ];
 
   const currentSelectedStaff = staff.find(
@@ -203,6 +212,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 </h1>
                 <p className="text-xs text-slate-500 mt-1">
                   Access patient electronic health records, OPD consultation queues, and inpatient ward admissions.
+                </p>
+                <p className="mt-3 max-w-xl border-l-2 border-teal-600 pl-3 text-xs leading-relaxed text-teal-900">
+                  Experience peace of mind with NABIDH-certified electronic medical records and a clinic management platform licensed by the Dubai Health Authority.
                 </p>
               </div>
 

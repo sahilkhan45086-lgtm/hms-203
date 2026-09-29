@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -22,6 +22,8 @@ import {
   PanelLeft,
   Search,
   UserPlus,
+  FileCheck2,
+  ChevronDown,
 } from 'lucide-react';
 import { useHospital, NavigationTab } from '../context/HospitalContext';
 import { getThemeClasses, normalizeTheme } from '../utils/theme';
@@ -44,6 +46,7 @@ export const Sidebar: React.FC = () => {
   } = useHospital();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null | undefined>(undefined);
   const themeClasses = getThemeClasses(appTheme);
   const isDark = normalizeTheme(appTheme) === 'dark';
 
@@ -144,6 +147,14 @@ export const Sidebar: React.FC = () => {
       roles: ['admin', 'doctor', 'nurse', 'lab'],
     },
     {
+      id: 'coder' as NavigationTab,
+      label: 'Medical Coder Desk',
+      icon: FileCheck2,
+      badge: null,
+      category: 'Diagnostics & Pharmacy',
+      roles: ['admin', 'medical-coder'],
+    },
+    {
       id: 'pharmacy' as NavigationTab,
       label: 'Pharmacy Stock',
       icon: Pill,
@@ -189,7 +200,7 @@ export const Sidebar: React.FC = () => {
       icon: Stethoscope,
       badge: staff.length,
       category: 'Staff & Governance',
-      roles: ['admin'],
+      roles: ['admin', 'doctor'],
     },
     {
       id: 'admin' as NavigationTab,
@@ -257,6 +268,11 @@ export const Sidebar: React.FC = () => {
       return true;
     });
   }, [currentRole, departmentPortal, navItems]);
+
+  const activeCategory = filteredNavItems.find((item) => item.id === activeTab)?.category ?? null;
+  useEffect(() => {
+    setExpandedCategory(undefined);
+  }, [activeTab, currentRole]);
 
   return (
     <aside
@@ -372,28 +388,43 @@ export const Sidebar: React.FC = () => {
         ].map((categoryName) => {
           const categoryItems = filteredNavItems.filter((item) => item.category === categoryName);
           if (categoryItems.length === 0) return null;
+          const isExpanded = expandedCategory === undefined
+            ? activeCategory === categoryName
+            : expandedCategory === categoryName;
+          const groupId = `nav-group-${categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
           return (
             <div key={categoryName} className="space-y-0.5">
               {!isCollapsed ? (
-                <div className="pt-1.5 pb-1 px-2 flex items-center justify-between">
-                  <span className={`text-[9px] uppercase font-bold tracking-widest ${themeClasses.sidebarHeaderColor}`}>
-                    {categoryName}
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  aria-controls={groupId}
+                  onClick={() => setExpandedCategory(isExpanded ? null : categoryName)}
+                  className={`flex min-h-8 w-full items-center justify-between rounded-md px-2 text-left transition hover:bg-slate-100 ${themeClasses.sidebarHeaderColor}`}
+                >
+                  <span className="text-[9px] font-bold uppercase tracking-widest">{categoryName}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[9px] font-mono font-medium text-slate-400">{categoryItems.length}</span>
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                   </span>
-                  <span className="text-[9px] font-mono text-slate-400 font-medium">{categoryItems.length}</span>
-                </div>
+                </button>
               ) : (
                 <div className="my-1 border-t border-slate-200/60" />
               )}
 
-              {categoryItems.map((item) => {
+              <div id={groupId} hidden={!isCollapsed && !isExpanded} className="space-y-0.5">
+                {categoryItems.map((item) => {
                 const isActive = activeTab === item.id;
                 const Icon = item.icon;
                 return (
                   <button
                     key={item.id}
                     id={`nav-${item.id}-link`}
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setExpandedCategory(item.category);
+                    }}
                     className={`w-full rounded-lg text-xs transition-colors cursor-pointer flex items-center ${
                       isCollapsed ? 'justify-center p-2' : 'justify-between px-2.5 py-1.5'
                     } ${
@@ -424,7 +455,8 @@ export const Sidebar: React.FC = () => {
                     )}
                   </button>
                 );
-              })}
+                })}
+              </div>
             </div>
           );
         })}

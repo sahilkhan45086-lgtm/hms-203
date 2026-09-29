@@ -99,6 +99,19 @@ export interface LabResult {
   sentToPatient?: boolean;
   sentToDoctor?: boolean;
   sentDate?: string;
+  insuranceApprovalId?: string;
+  publishedBy?: string;
+}
+
+export interface PatientService {
+  id: string;
+  name: string;
+  category: InsuranceApproval['serviceCategory'];
+  serviceCode?: string;
+  estimatedCost: number;
+  addedAt: string;
+  addedBy: string;
+  insuranceApprovalId?: string;
 }
 
 export interface ClinicalNote {
@@ -297,6 +310,7 @@ export interface Patient {
   medications: Medication[];
   prescriptions?: Medication[];
   labResults: LabResult[];
+  services?: PatientService[];
   clinicalNotes: ClinicalNote[];
   diagnoses?: PatientDiagnosis[];
   facilityVisits?: FacilityVisit[];
@@ -351,6 +365,8 @@ export interface Appointment {
   status: AppointmentStatus;
   priority: AppointmentPriority;
   reason: string;
+  cancellationReason?: string;
+  cancellationNotes?: string;
   queueNumber: number;
   estimatedWaitMinutes?: number;
   notes?: string;
@@ -370,6 +386,17 @@ export interface Doctor {
   availableHours: string;
   consultationFee: number;
   status: 'Available' | 'In Consultation' | 'In Surgery' | 'Off Duty';
+}
+
+export interface DoctorDutySchedule {
+  id: string;
+  doctorId: string;
+  date: string;
+  isOnDuty: boolean;
+  startTime: string;
+  endTime: string;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface DoctorDutyChangeRequest {
@@ -468,6 +495,7 @@ export interface InsuranceApproval {
   copayPercentage: number;
   copayAmount: number;
   approvalStatus: 'Approved' | 'Pending' | 'Query Raised' | 'Rejected';
+  serviceRecordId?: string;
   approvalDate: string;
   validUntil: string;
   authorisedBy: string;
@@ -690,7 +718,8 @@ export type UserRole =
   | 'receptionist'
   | 'pharmacist'
   | 'lab'
-  | 'radiology';
+  | 'radiology'
+  | 'medical-coder';
 
 export interface RolePermissions {
   canRegisterPatients: boolean;
@@ -714,6 +743,7 @@ export type DepartmentPortal = 'outpatient' | 'inpatient' | 'overview';
 
 export interface StaffMember {
   id: string;
+  isActive?: boolean;
   name: string;
   role: UserRole;
   department: string;

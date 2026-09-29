@@ -1206,6 +1206,18 @@ export const initialStaff: StaffMember[] = [
     licenseNumber: 'FACHE-9921',
     status: 'On Duty',
   },
+  {
+    id: 'STF-08',
+    name: 'Morgan Ellis, RHIT',
+    role: 'medical-coder',
+    department: 'Medical Coding & Insurance Review',
+    shift: 'Morning (07:00 - 15:00)',
+    phone: '+1 (555) 912-8001',
+    email: 'm.ellis@apexhealth.org',
+    roomOrStation: 'Revenue Integrity Desk',
+    licenseNumber: 'RHIT-482019',
+    status: 'On Duty',
+  },
 ];
 
 export const initialPharmacy: PharmacyItem[] = [

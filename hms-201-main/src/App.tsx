@@ -28,11 +28,12 @@ import { DashboardOverview } from './components/DashboardOverview';
 import { TriageStationView } from './components/TriageStationView';
 import { PatientsEMR } from './components/PatientsEMR';
 import { AppointmentsManager } from './components/AppointmentsManager';
-import { DoctorDutySlotsTable } from './components/DoctorDutySlotsTable';
+import { DoctorDutyScheduleView } from './components/DoctorDutyScheduleView';
 import { PatientEnquiryView } from './components/PatientEnquiryView';
 import { WardOccupancyView } from './components/WardOccupancyView';
 import { PharmacyInventory } from './components/PharmacyInventory';
 import { LabDiagnostics } from './components/LabDiagnostics';
+import { MedicalCoderWorkspace } from './components/MedicalCoderWorkspace';
 import { BillingInvoicing } from './components/BillingInvoicing';
 import { HospitalPriceListView } from './components/HospitalPriceListView';
 import { TelehealthView } from './components/TelehealthView';
@@ -170,12 +171,7 @@ const HospitalAppContent: React.FC = () => {
       case 'doctor-rota':
         return (
           <div className="p-4 lg:p-6 max-w-7xl mx-auto w-full">
-            <DoctorDutySlotsTable
-              onBookSlot={(doctorId, date, timeSlot) => {
-                setAppointmentPreset({ doctorId, date, timeSlot });
-                setIsNewAppointmentOpen(true);
-              }}
-            />
+            <DoctorDutyScheduleView />
           </div>
         );
 
@@ -200,6 +196,8 @@ const HospitalAppContent: React.FC = () => {
       case 'labs':
       case 'radiology':
         return <LabDiagnostics />;
+      case 'coder':
+        return <MedicalCoderWorkspace />;
 
       case 'billing':
         return (

@@ -35,6 +35,7 @@ import {
   TokenBillingSummary,
   TokenDiagnosticReport,
   DoctorDutyChangeRequest,
+  DoctorDutySchedule,
 } from '../types';
 import { getPatientPhoto } from '../utils/patientImages';
 import {
@@ -71,6 +72,7 @@ export type NavigationTab =
   | 'wards'
   | 'pricelist'
   | 'staff'
+  | 'coder'
   | 'reports'
   | 'admin';
 
@@ -182,11 +184,27 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleDefinition> = {
       canAccessAuditLogs: false,
     },
   },
+  'medical-coder': {
+    role: 'medical-coder',
+    label: 'Medical Coder',
+    description: 'Review insurance pre-authorizations and publish approved diagnostic reports to patient records.',
+    permissions: {
+      canRegisterPatients: false,
+      canEditEMR: false,
+      canPrescribeMeds: false,
+      canDispenseMeds: false,
+      canRunLabTests: false,
+      canReviewRadiology: false,
+      canManageBilling: false,
+      canAccessAuditLogs: false,
+    },
+  },
 };
 
 interface HospitalContextType {
   patients: Patient[];
   doctors: Doctor[];
+  doctorDutySchedules: DoctorDutySchedule[];
   doctorDutyChangeRequests: DoctorDutyChangeRequest[];
   appointments: Appointment[];
   invoices: Invoice[];
@@ -238,7 +256,7 @@ interface HospitalContextType {
   // Appointment Actions
   bookAppointment: (aptData: Omit<Appointment, 'id' | 'queueNumber' | 'createdAt'>) => Appointment;
   addAppointment: (aptData: any) => Appointment;
-  updateAppointmentStatus: (aptId: string, status: AppointmentStatus) => void;
+  updateAppointmentStatus: (aptId: string, status: AppointmentStatus, cancellation?: { reason: string; details?: string }) => void;
   callNextAppointment: (doctorId?: string) => void;
   // Billing Actions
   createInvoice: (invData: Omit<Invoice, 'id' | 'subtotal' | 'patientPayable' | 'amountPaid' | 'balanceDue' | 'transactions'>) => Invoice;
@@ -247,6 +265,7 @@ interface HospitalContextType {
   addRefundPayment: (data: Omit<RefundPayment, 'id' | 'voucherNumber'>) => RefundPayment;
   addInsuranceApproval: (data: Omit<InsuranceApproval, 'id'>) => InsuranceApproval;
   updateInsuranceApprovalStatus: (id: string, status: InsuranceApproval['approvalStatus'], remarks?: string) => void;
+  publishInsuranceApproval: (id: string, details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>) => void;
   addPosTransaction: (data: Omit<PosTransaction, 'id' | 'rrnNumber'>) => PosTransaction;
   createReceptionToken: (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdTime'>) => ReceptionToken;
   updateReceptionTokenStatus: (id: string, status: ReceptionToken['status']) => void;
@@ -259,8 +278,10 @@ interface HospitalContextType {
   assignBedToPatient: (bedId: string, patientId: string) => void;
   releaseBed: (bedId: string) => void;
   // Staff Actions
-  addStaff: (member: Omit<StaffMember, 'id'>) => void;
+  addStaff: (member: Omit<StaffMember, 'id' | 'isActive'>) => StaffMember | null;
+  deactivateStaff: (id: string) => boolean;
   updateStaff: (id: string, updates: Partial<StaffMember>) => void;
+  setDoctorDutySchedule: (data: Omit<DoctorDutySchedule, 'id' | 'updatedAt' | 'updatedBy'>) => boolean;
   submitDoctorDutyChangeRequest: (
     doctorId: string,
     updates: { availableDays: string[]; availableHours: string; reason: string }
@@ -308,6 +329,7 @@ const HospitalContext = createContext<HospitalContextType | undefined>(undefined
 const STORAGE_KEYS = {
   PATIENTS: 'medcore_patients_v3',
   DOCTORS: 'medcore_doctors_v3',
+  DOCTOR_DUTY_SCHEDULES: 'medcore_doctor_duty_schedules_v1',
   DOCTOR_DUTY_CHANGE_REQUESTS: 'medcore_doctor_duty_change_requests_v1',
   APPOINTMENTS: 'medcore_appointments_v3',
   INVOICES: 'medcore_invoices_v3',
@@ -351,6 +373,15 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [doctors, setDoctors] = useState<Doctor[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.DOCTORS);
     return saved ? JSON.parse(saved) : initialDoctors;
+  });
+
+  const [doctorDutySchedules, setDoctorDutySchedules] = useState<DoctorDutySchedule[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DOCTOR_DUTY_SCHEDULES);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [doctorDutyChangeRequests, setDoctorDutyChangeRequests] = useState<DoctorDutyChangeRequest[]>(() => {
@@ -455,7 +486,11 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [staff, setStaff] = useState<StaffMember[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.STAFF);
-    return saved ? JSON.parse(saved) : initialStaff;
+    if (!saved) return initialStaff;
+    const savedStaff: StaffMember[] = JSON.parse(saved);
+    return savedStaff.some((member) => member.id === 'STF-08')
+      ? savedStaff
+      : [...savedStaff, ...initialStaff.filter((member) => member.id === 'STF-08')];
   });
 
   const [pharmacy, setPharmacy] = useState<PharmacyItem[]>(() => {
@@ -504,7 +539,6 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         id: 'NOTIF-3',
         title: 'Live Appointment Queue',
         message: 'Dr. Sarah Jenkins has started consultation with Eleanor Pemberton.',
-        type: 'info',
         timestamp: new Date(Date.now() - 1000 * 60 * 20).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         read: false,
         relatedEntityId: 'APT-2026-001',
@@ -564,6 +598,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     localStorage.setItem(STORAGE_KEYS.DOCTORS, JSON.stringify(doctors));
   }, [doctors]);
   useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.DOCTOR_DUTY_SCHEDULES, JSON.stringify(doctorDutySchedules));
+  }, [doctorDutySchedules]);
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.DOCTOR_DUTY_CHANGE_REQUESTS, JSON.stringify(doctorDutyChangeRequests));
   }, [doctorDutyChangeRequests]);
   useEffect(() => {
@@ -612,10 +649,12 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Auth & Session
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
-    return saved === 'true';
+    const savedUserId = localStorage.getItem(STORAGE_KEYS.AUTH_USER_ID);
+    return saved === 'true' && staff.some((member) => member.id === savedUserId && member.isActive !== false);
   });
   const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_KEYS.AUTH_USER_ID);
+    const savedUserId = localStorage.getItem(STORAGE_KEYS.AUTH_USER_ID);
+    return staff.some((member) => member.id === savedUserId && member.isActive !== false) ? savedUserId : null;
   });
   const [departmentPortal, setDepartmentPortalState] = useState<DepartmentPortal | null>(() => {
     return (localStorage.getItem(STORAGE_KEYS.DEPARTMENT_PORTAL) as DepartmentPortal) || null;
@@ -623,8 +662,8 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [showPortalSelect, setShowPortalSelect] = useState<boolean>(false);
 
   const currentUser: StaffMember =
-    (authenticatedUserId ? staff.find((s) => s.id === authenticatedUserId) : null) ||
-    staff.find((s) => s.role === currentRole) ||
+    (authenticatedUserId ? staff.find((s) => s.id === authenticatedUserId && s.isActive !== false) : null) ||
+    staff.find((s) => s.role === currentRole && s.isActive !== false) ||
     staff[0] || {
       id: 'STF-ADMIN',
       name: 'System Administrator',
@@ -648,7 +687,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const setCurrentUserId = (id: string) => {
-    const matched = staff.find((s) => s.id === id);
+    const matched = staff.find((s) => s.id === id && s.isActive !== false);
     if (matched) {
       setAuthenticatedUserId(matched.id);
       setCurrentRoleState(matched.role);
@@ -664,10 +703,11 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return { success: false, message: 'Please select or enter your Staff ID' };
     }
     const matchedStaff = staff.find(
-      (s) =>
+      (s) => s.isActive !== false && (
         s.id.toLowerCase() === trimmed ||
         s.email.toLowerCase() === trimmed ||
         s.name.toLowerCase().includes(trimmed)
+      )
     );
     if (!matchedStaff) {
       return { success: false, message: 'Staff ID not found in hospital directory' };
@@ -1359,19 +1399,36 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return bookAppointment(fullData);
   };
 
-  const updateAppointmentStatus = (aptId: string, status: AppointmentStatus) => {
+  const updateAppointmentStatus = (
+    aptId: string,
+    status: AppointmentStatus,
+    cancellation?: { reason: string; details?: string }
+  ) => {
+    if (status === 'Cancelled' && !cancellation?.reason.trim()) return;
     let affectedApt: Appointment | undefined;
     setAppointments((prev) =>
       prev.map((apt) => {
         if (apt.id === aptId) {
-          affectedApt = { ...apt, status };
+          affectedApt = {
+            ...apt,
+            status,
+            cancellationReason: status === 'Cancelled' ? cancellation?.reason.trim() : apt.cancellationReason,
+            cancellationNotes: status === 'Cancelled' ? cancellation?.details?.trim() : apt.cancellationNotes,
+          };
           return affectedApt;
         }
         return apt;
       })
     );
     if (affectedApt) {
-      logAuditEvent('UPDATE', 'Appointment', aptId, `Status updated to ${status}`);
+      logAuditEvent(
+        'UPDATE',
+        'Appointment',
+        aptId,
+        status === 'Cancelled'
+          ? `Status updated to Cancelled. Reason: ${affectedApt.cancellationReason}${affectedApt.cancellationNotes ? ` · ${affectedApt.cancellationNotes}` : ''}`
+          : `Status updated to ${status}`
+      );
       if (status === 'In Consultation') {
         setDoctors((prev) =>
           prev.map((d) => (d.id === affectedApt?.doctorId ? { ...d, status: 'In Consultation' } : d))
@@ -1638,15 +1695,15 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     setInsuranceApprovals((prev) => [newRecord, ...prev]);
     addNotification(
-      'Insurance Pre-Auth Approved',
-      `Auth #${data.approvalNumber} linked for ${data.patientName} under Dr. ${data.doctorName} (${data.serviceCategory}: ${data.serviceName}). Approved: $${data.approvedAmount}.`,
-      'success'
+      data.approvalStatus === 'Pending' ? 'Insurance Authorization Requested' : 'Insurance Pre-Auth Approved',
+      `${data.approvalStatus === 'Pending' ? 'Authorization requested' : `Auth #${data.approvalNumber} linked`} for ${data.patientName} under ${data.doctorName} (${data.serviceCategory}: ${data.serviceName}).`,
+      data.approvalStatus === 'Pending' ? 'info' : 'success'
     );
     logAuditEvent(
       'CREATE',
       'Billing Invoice',
       newId,
-      `Linked pre-authorisation #${data.approvalNumber} for ${data.patientName} under ${data.doctorName}`,
+      `${data.approvalStatus === 'Pending' ? 'Requested' : 'Linked'} pre-authorisation #${data.approvalNumber} for ${data.patientName} under ${data.doctorName}`,
       'HIPAA Access Log'
     );
     return newRecord;
@@ -1669,6 +1726,29 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       )
     );
     addNotification('Insurance Pre-Auth Status Updated', `Authorisation ${id} status set to ${status}.`, 'info');
+  };
+
+  const publishInsuranceApproval = (
+    id: string,
+    details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>
+  ) => {
+    const approval = insuranceApprovals.find((item) => item.id === id);
+    if (!approval || (approval.approvalStatus !== 'Pending' && approval.approvalStatus !== 'Query Raised')) return;
+    const copayAmount = (details.approvedAmount * details.copayPercentage) / 100;
+    setInsuranceApprovals((prev) => prev.map((item) => item.id === id
+      ? {
+          ...item,
+          ...details,
+          copayAmount,
+          approvalStatus: 'Approved',
+          approvalDate: new Date().toISOString().slice(0, 10),
+          authorisedBy: currentUser.name,
+          remarks: `Approval published by ${currentUser.name}.`,
+        }
+      : item
+    ));
+    addNotification('Insurance Approval Published', `Authorization ${details.approvalNumber} for ${approval.patientName} is approved and available to billing.`, 'success');
+    logAuditEvent('UPDATE', 'Billing Invoice', id, `Medical coder ${currentUser.name} published insurance authorization ${details.approvalNumber}.`, 'HIPAA Access Log');
   };
 
   const addPosTransaction = (data: Omit<PosTransaction, 'id' | 'rrnNumber'>): PosTransaction => {
@@ -2024,19 +2104,88 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addNotification('Bed Cleared', `Bed ${targetBed.bedNumber} sanitized and available.`, 'info');
   };
 
-  const addStaff = (memberData: Omit<StaffMember, 'id'>) => {
+  const addStaff = (memberData: Omit<StaffMember, 'id' | 'isActive'>): StaffMember | null => {
+    const doctorManagedRoles: UserRole[] = ['doctor', 'nurse', 'lab', 'radiology'];
+    const canAdd = currentRole === 'admin' || (
+      currentRole === 'doctor' &&
+      doctorManagedRoles.includes(memberData.role) &&
+      memberData.department === currentUser.department
+    );
+    if (!canAdd) return null;
+
+    const nextId = staff.reduce((maxId, member) => {
+      const sequence = member.id.startsWith('STF-') ? Number(member.id.slice(4)) : 0;
+      return Number.isInteger(sequence) ? Math.max(maxId, sequence) : maxId;
+    }, 0) + 1;
     const newStaffMember: StaffMember = {
       ...memberData,
-      id: `STF-${String(staff.length + 1).padStart(2, '0')}`,
+      id: `STF-${String(nextId).padStart(2, '0')}`,
+      isActive: true,
     };
     setStaff((prev) => [...prev, newStaffMember]);
     logAuditEvent('CREATE', 'Security Settings', newStaffMember.id, `Staff member added: ${newStaffMember.name} (${newStaffMember.role})`);
     addNotification('Staff Registered', `Added ${newStaffMember.name} to ${newStaffMember.department}.`, 'info');
+    return newStaffMember;
+  };
+
+  const deactivateStaff = (id: string): boolean => {
+    const target = staff.find((member) => member.id === id && member.isActive !== false);
+    if (!target || target.id === currentUser.id) return false;
+
+    const activeAdminCount = staff.filter((member) => member.role === 'admin' && member.isActive !== false).length;
+    const isLastAdmin = target.role === 'admin' && activeAdminCount <= 1;
+    const doctorManagedRoles: UserRole[] = ['doctor', 'nurse', 'lab', 'radiology'];
+    const canDeactivate = currentRole === 'admin'
+      ? !isLastAdmin
+      : currentRole === 'doctor' &&
+        target.department === currentUser.department &&
+        doctorManagedRoles.includes(target.role);
+    if (!canDeactivate) return false;
+
+    setStaff((prev) => prev.map((member) => member.id === id
+      ? { ...member, isActive: false, status: 'Off Duty' }
+      : member
+    ));
+    logAuditEvent('UPDATE', 'Security Settings', id, `Staff account deactivated: ${target.name} (${target.role}).`);
+    addNotification('Staff Account Deactivated', `${target.name}'s account was deactivated.`, 'warning');
+    return true;
   };
 
   const updateStaff = (id: string, updates: Partial<StaffMember>) => {
     setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
     logAuditEvent('UPDATE', 'Security Settings', id, `Updated staff duty profile`);
+  };
+
+  const setDoctorDutySchedule = (
+    data: Omit<DoctorDutySchedule, 'id' | 'updatedAt' | 'updatedBy'>
+  ): boolean => {
+    if (currentRole !== 'admin' || data.date < new Date().toISOString().slice(0, 10)) return false;
+    if (!doctors.some((doctor) => doctor.id === data.doctorId)) return false;
+    if (data.isOnDuty) {
+      const isValidTime = (value: string) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+      if (!isValidTime(data.startTime) || !isValidTime(data.endTime) || data.endTime <= data.startTime) return false;
+    }
+
+    const id = `${data.doctorId}-${data.date}`;
+    const schedule: DoctorDutySchedule = {
+      ...data,
+      startTime: data.isOnDuty ? data.startTime : '',
+      endTime: data.isOnDuty ? data.endTime : '',
+      id,
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser.name,
+    };
+    setDoctorDutySchedules((previous) => [
+      schedule,
+      ...previous.filter((item) => item.id !== id),
+    ]);
+    logAuditEvent(
+      'UPDATE',
+      'Appointment',
+      id,
+      `${currentUser.name} set ${data.isOnDuty ? `${data.startTime}-${data.endTime}` : 'off duty'} for ${doctors.find((doctor) => doctor.id === data.doctorId)?.name} on ${data.date}.`
+    );
+    return true;
   };
 
   const submitDoctorDutyChangeRequest = (
@@ -2160,6 +2309,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const resetHospitalData = () => {
     setPatients(initialPatients);
     setDoctors(initialDoctors);
+    setDoctorDutySchedules([]);
     setDoctorDutyChangeRequests([]);
     setAppointments(initialAppointments);
     setInvoices(initialInvoices);
@@ -2220,6 +2370,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const recordCounts = {
       patients: patients.length,
       doctors: doctors.length,
+      doctorDutySchedules: doctorDutySchedules.length,
       appointments: appointments.length,
       invoices: invoices.length,
       wardBeds: wardBeds.length,
@@ -2248,6 +2399,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         database: {
           patients,
           doctors,
+          doctorDutySchedules,
           appointments,
           invoices,
           wardBeds,
@@ -2331,6 +2483,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       value={{
         patients,
         doctors,
+        doctorDutySchedules,
         doctorDutyChangeRequests,
         appointments,
         invoices,
@@ -2398,7 +2551,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         completeTokenDiagnosticReport,
         assignBedToPatient,
         releaseBed,
+        setDoctorDutySchedule,
         addStaff,
+        deactivateStaff,
         updateStaff,
         submitDoctorDutyChangeRequest,
         reviewDoctorDutyChangeRequest,

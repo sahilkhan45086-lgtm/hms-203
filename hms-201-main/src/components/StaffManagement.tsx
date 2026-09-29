@@ -12,14 +12,51 @@ import {
   Award,
   CalendarClock,
   X,
+  UserPlus,
+  UserX,
+  AlertCircle,
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
-import { StaffMember } from '../types';
+import { StaffMember, UserRole } from '../types';
 
 export const StaffManagement: React.FC = () => {
-  const { staff, doctors, currentRole, doctorDutyChangeRequests, reviewDoctorDutyChangeRequest } = useHospital();
+  const {
+    staff,
+    doctors,
+    currentRole,
+    currentUser,
+    addStaff,
+    deactivateStaff,
+    doctorDutyChangeRequests,
+    reviewDoctorDutyChangeRequest,
+  } = useHospital();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [showInactive, setShowInactive] = useState(false);
+  const [isAddFormOpen, setIsAddFormOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newDepartment, setNewDepartment] = useState(currentUser.department);
+  const [newRoom, setNewRoom] = useState('');
+  const [newLicense, setNewLicense] = useState('');
+  const [newShift, setNewShift] = useState<StaffMember['shift']>('Morning (07:00 - 15:00)');
+  const [newRole, setNewRole] = useState<UserRole>(currentRole === 'doctor' ? 'nurse' : 'doctor');
+  const [formError, setFormError] = useState('');
+  const [staffToDeactivate, setStaffToDeactivate] = useState<StaffMember | null>(null);
+
+  const doctorManagedRoles: UserRole[] = ['doctor', 'nurse', 'lab', 'radiology'];
+  const canManageStaff = currentRole === 'admin' || currentRole === 'doctor';
+  const activeAdminCount = staff.filter((member) => member.role === 'admin' && member.isActive !== false).length;
+
+  const canManageMember = (member: StaffMember) =>
+    member.id !== currentUser.id &&
+    !(member.role === 'admin' && activeAdminCount <= 1) &&
+    (currentRole === 'admin' || (
+      currentRole === 'doctor' &&
+      member.department === currentUser.department &&
+      doctorManagedRoles.includes(member.role)
+    ));
 
   const filteredStaff = staff.filter((s) => {
     const matchesSearch =
@@ -30,10 +67,49 @@ export const StaffManagement: React.FC = () => {
 
     const matchesRole =
       roleFilter === 'all' || s.role.toLowerCase() === roleFilter.toLowerCase();
+    const matchesActive = showInactive || s.isActive !== false;
 
-    return matchesSearch && matchesRole;
+    return matchesSearch && matchesRole && matchesActive;
   });
   const pendingDutyRequests = doctorDutyChangeRequests.filter((request) => request.status === 'Pending');
+
+  const handleAddStaff = (event: React.FormEvent) => {
+    event.preventDefault();
+    setFormError('');
+    const result = addStaff({
+      name: newName.trim(),
+      role: newRole,
+      department: currentRole === 'doctor' ? currentUser.department : newDepartment.trim(),
+      shift: newShift,
+      phone: newPhone.trim(),
+      email: newEmail.trim(),
+      roomOrStation: newRoom.trim(),
+      licenseNumber: newLicense.trim() || 'Pending verification',
+      status: 'On Duty',
+    });
+    if (!result) {
+      setFormError('You do not have permission to add this staff role or department.');
+      return;
+    }
+    setNewName('');
+    setNewEmail('');
+    setNewPhone('');
+    setNewRoom('');
+    setNewLicense('');
+    setIsAddFormOpen(false);
+  };
+
+  if (!canManageStaff) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <section className="rounded-xl border border-amber-200 bg-white p-6 text-center shadow-sm">
+          <ShieldCheck className="mx-auto h-8 w-8 text-amber-600" />
+          <h2 className="mt-3 text-base font-bold text-slate-900">Staff directory access restricted</h2>
+          <p className="mt-1 text-sm text-slate-600">Only administrators and doctors can view this directory.</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
@@ -56,11 +132,97 @@ export const StaffManagement: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
           <span>NPI & Medical License Verified</span>
+          {canManageStaff && (
+            <button
+              type="button"
+              onClick={() => {
+                setFormError('');
+                setIsAddFormOpen((open) => !open);
+              }}
+              className="ml-1 inline-flex h-9 items-center gap-1.5 rounded-md bg-teal-800 px-3 text-xs font-bold text-white hover:bg-teal-900"
+            >
+              <UserPlus className="h-3.5 w-3.5" /> Add staff
+            </button>
+          )}
         </div>
       </div>
+
+      {isAddFormOpen && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Add staff account</h3>
+              <p className="mt-0.5 text-xs text-slate-500">{currentRole === 'admin' ? 'Assign an approved role and department.' : `Clinical staff in ${currentUser.department}.`}</p>
+            </div>
+            <button type="button" onClick={() => setIsAddFormOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close add staff form">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {formError && (
+            <p role="alert" className="mb-3 flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-800">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </p>
+          )}
+
+          <form onSubmit={handleAddStaff} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs font-semibold text-slate-700">
+              Full name
+              <input required value={newName} onChange={(event) => setNewName(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Email
+              <input required type="email" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Phone
+              <input required type="tel" value={newPhone} onChange={(event) => setNewPhone(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Role
+              <select required value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal">
+                {(currentRole === 'admin' ? ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology', 'medical-coder'] as UserRole[] : doctorManagedRoles).map((role) => (
+                  <option key={role} value={role}>{role.replace('-', ' ')}</option>
+                ))}
+              </select>
+            </label>
+            {currentRole === 'admin' ? (
+              <label className="text-xs font-semibold text-slate-700">
+                Department
+                <input required value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+              </label>
+            ) : (
+              <div className="text-xs font-semibold text-slate-700">
+                Department
+                <p className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-normal text-slate-600">{currentUser.department}</p>
+              </div>
+            )}
+            <label className="text-xs font-semibold text-slate-700">
+              Shift
+              <select value={newShift} onChange={(event) => setNewShift(event.target.value as StaffMember['shift'])} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal">
+                {(['Morning (07:00 - 15:00)', 'Evening (15:00 - 23:00)', 'Night (23:00 - 07:00)', 'On-Call'] as const).map((shift) => <option key={shift} value={shift}>{shift}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Station / room
+              <input required value={newRoom} onChange={(event) => setNewRoom(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              License / credential ID
+              <input value={newLicense} onChange={(event) => setNewLicense(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-normal" placeholder="Pending verification if omitted" />
+            </label>
+            <p className="text-[11px] text-amber-800 sm:col-span-2 lg:col-span-4">This prototype creates a staff directory account only; secure credential setup and identity verification are not connected.</p>
+            <div className="flex justify-end sm:col-span-2 lg:col-span-4">
+              <button type="submit" className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-800 px-4 text-xs font-bold text-white hover:bg-teal-900">
+                <UserPlus className="h-4 w-4" /> Create staff record
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
 
       {currentRole === 'admin' && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -137,6 +299,7 @@ export const StaffManagement: React.FC = () => {
             { id: 'nurse', label: 'Nursing Staff' },
             { id: 'admin', label: 'Administration' },
             { id: 'receptionist', label: 'Admissions' },
+            { id: 'medical-coder', label: 'Medical Coders' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -151,6 +314,14 @@ export const StaffManagement: React.FC = () => {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          aria-pressed={showInactive}
+          onClick={() => setShowInactive((shown) => !shown)}
+          className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold ${showInactive ? 'bg-slate-700 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+        >
+          {showInactive ? 'Showing all accounts' : `Include deactivated (${staff.filter((member) => member.isActive === false).length})`}
+        </button>
       </div>
 
       {/* Staff Grid */}
@@ -198,17 +369,44 @@ export const StaffManagement: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Active On-Duty
+            <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 text-[11px]">
+              <span className={`flex items-center gap-1 font-semibold ${person.isActive === false ? 'text-slate-500' : person.status === 'Off Duty' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {person.isActive === false ? <UserX className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {person.isActive === false ? 'Deactivated' : person.status}
               </span>
-              <span className="text-slate-400 font-mono text-[10px]">
-                NPI: 1948271048
+              <span className="truncate text-right font-mono text-[10px] text-slate-400">
+                Credential: {person.licenseNumber || 'Not recorded'}
               </span>
             </div>
+            {canManageMember(person) && person.isActive !== false && (
+              <button
+                type="button"
+                onClick={() => setStaffToDeactivate(person)}
+                className="mt-3 inline-flex min-h-8 items-center gap-1.5 self-end rounded-md border border-rose-200 px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+              >
+                <UserX className="h-3.5 w-3.5" /> Deactivate account
+              </button>
+            )}
           </div>
         ))}
       </div>
+      {staffToDeactivate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="deactivate-staff-title" className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-700"><UserX className="h-4 w-4" /></span>
+              <div>
+                <h3 id="deactivate-staff-title" className="text-sm font-bold text-slate-900">Deactivate staff account?</h3>
+                <p className="mt-1 text-xs text-slate-600">{staffToDeactivate.name} will no longer be able to sign in. Their staff record and audit history will be retained.</p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setStaffToDeactivate(null)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="button" onClick={() => { deactivateStaff(staffToDeactivate.id); setStaffToDeactivate(null); }} className="rounded-md bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-800">Deactivate</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };
