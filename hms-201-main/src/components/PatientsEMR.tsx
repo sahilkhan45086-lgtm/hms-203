@@ -219,6 +219,10 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
       remarks: 'Requested by attending physician; awaiting medical coder review.',
       serviceRecordId: service.id,
     });
+    if (!request) {
+      addNotification('Authorization Request Not Sent', 'Only the assigned doctor can submit a pending insurance authorization request.', 'warning', selectedPatient.id);
+      return;
+    }
     updatePatient(selectedPatient.id, {
       services: patientServices.map((item) => item.id === service.id ? { ...item, insuranceApprovalId: request.id } : item),
     });

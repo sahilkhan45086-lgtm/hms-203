@@ -71,7 +71,7 @@ export const Sidebar: React.FC = () => {
       label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null,
-      category: 'Clinical Services',
+      category: 'Patient Care',
       roles: ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology'],
     },
     {
@@ -79,7 +79,7 @@ export const Sidebar: React.FC = () => {
       label: 'Patient EMR Records',
       icon: Users,
       badge: totalPatients,
-      category: 'Clinical Services',
+      category: 'Patient Care',
       roles: ['doctor'],
     },
     {
@@ -87,7 +87,7 @@ export const Sidebar: React.FC = () => {
       label: currentRole === 'receptionist' ? '1. Patient Registration' : 'Patient Registration',
       icon: UserPlus,
       badge: null,
-      category: 'Reception Desk Portal',
+      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Patient Care',
       roles: ['admin', 'nurse', 'receptionist'],
     },
     {
@@ -95,7 +95,7 @@ export const Sidebar: React.FC = () => {
       label: 'Nurse Triage Station',
       icon: Activity,
       badge: statTriageCount > 0 ? `${statTriageCount} STAT` : null,
-      category: 'Clinical Services',
+      category: 'Patient Care',
       roles: ['admin', 'nurse', 'doctor'],
     },
     {
@@ -103,7 +103,7 @@ export const Sidebar: React.FC = () => {
       label: 'Inpatients (IPD)',
       icon: BedDouble,
       badge: `${inpatientCount} Admitted`,
-      category: 'Clinical Services',
+      category: 'Patient Care',
       roles: ['admin', 'doctor', 'nurse'],
     },
     {
@@ -111,7 +111,7 @@ export const Sidebar: React.FC = () => {
       label: 'Outpatients (OPD)',
       icon: UserCheck,
       badge: `${outpatientCount} Visits`,
-      category: 'Clinical Services',
+      category: 'Patient Care',
       roles: ['admin', 'doctor', 'nurse'],
     },
     {
@@ -119,7 +119,7 @@ export const Sidebar: React.FC = () => {
       label: currentRole === 'receptionist' ? '2. Appointment' : 'Appointments',
       icon: Calendar,
       badge: activeQueueCount,
-      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Front Desk & Schedule',
+      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Appointments & Duty',
       roles: ['admin', 'receptionist', 'doctor'],
     },
     {
@@ -127,7 +127,7 @@ export const Sidebar: React.FC = () => {
       label: 'Duty Roster',
       icon: CalendarClock,
       badge: null,
-      category: 'Front Desk & Schedule',
+      category: 'Appointments & Duty',
       roles: ['admin', 'doctor'],
     },
     {
@@ -135,7 +135,7 @@ export const Sidebar: React.FC = () => {
       label: currentRole === 'receptionist' ? '3. Patient Enquiry' : 'Patient Facility Enquiry',
       icon: Search,
       badge: 'Lookup',
-      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Front Desk & Schedule',
+      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Patient Care',
       roles: ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology'],
     },
     {
@@ -380,8 +380,8 @@ export const Sidebar: React.FC = () => {
       <div className="space-y-3">
         {[
           'Reception Desk Portal',
-          'Clinical Services',
-          'Front Desk & Schedule',
+          'Patient Care',
+          'Appointments & Duty',
           'Diagnostics & Pharmacy',
           'Billing & Facilities',
           'Staff & Governance',

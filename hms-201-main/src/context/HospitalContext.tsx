@@ -263,8 +263,8 @@ interface HospitalContextType {
   processPayment: (invoiceId: string, paymentData: { amount: number; method: PaymentMethod; cardLast4?: string }) => Promise<{ success: boolean; transaction: PaymentTransaction }>;
   addAdvancePayment: (data: Omit<AdvancePayment, 'id' | 'receiptNumber'>) => AdvancePayment;
   addRefundPayment: (data: Omit<RefundPayment, 'id' | 'voucherNumber'>) => RefundPayment;
-  addInsuranceApproval: (data: Omit<InsuranceApproval, 'id'>) => InsuranceApproval;
-  updateInsuranceApprovalStatus: (id: string, status: InsuranceApproval['approvalStatus'], remarks?: string) => void;
+  addInsuranceApproval: (data: Omit<InsuranceApproval, 'id'>) => InsuranceApproval | null;
+  updateInsuranceApprovalStatus: (id: string, status: Exclude<InsuranceApproval['approvalStatus'], 'Approved'>, remarks?: string) => void;
   publishInsuranceApproval: (id: string, details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>) => void;
   addPosTransaction: (data: Omit<PosTransaction, 'id' | 'rrnNumber'>) => PosTransaction;
   createReceptionToken: (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdTime'>) => ReceptionToken;
@@ -1686,7 +1686,8 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return newRecord;
   };
 
-  const addInsuranceApproval = (data: Omit<InsuranceApproval, 'id'>): InsuranceApproval => {
+  const addInsuranceApproval = (data: Omit<InsuranceApproval, 'id'>): InsuranceApproval | null => {
+    if (currentRole !== 'doctor' || data.approvalStatus !== 'Pending') return null;
     const seq = insuranceApprovals.length + 1;
     const newId = `APP-${new Date().getFullYear()}-${String(seq).padStart(3, '0')}`;
     const newRecord: InsuranceApproval = {
@@ -1711,9 +1712,10 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const updateInsuranceApprovalStatus = (
     id: string,
-    status: InsuranceApproval['approvalStatus'],
+    status: Exclude<InsuranceApproval['approvalStatus'], 'Approved'>,
     remarks?: string
   ) => {
+    if (currentRole !== 'medical-coder') return;
     setInsuranceApprovals((prev) =>
       prev.map((app) =>
         app.id === id
@@ -1732,6 +1734,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     id: string,
     details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>
   ) => {
+    if (currentRole !== 'medical-coder') return;
     const approval = insuranceApprovals.find((item) => item.id === id);
     if (!approval || (approval.approvalStatus !== 'Pending' && approval.approvalStatus !== 'Query Raised')) return;
     const copayAmount = (details.approvedAmount * details.copayPercentage) / 100;

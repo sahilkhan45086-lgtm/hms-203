@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   CreditCard,
   Plus,
@@ -24,7 +24,6 @@ import { useHospital } from '../context/HospitalContext';
 import { Invoice } from '../types';
 import { AdvancePaymentModal } from './billing/AdvancePaymentModal';
 import { RefundPaymentModal } from './billing/RefundPaymentModal';
-import { InsuranceAuthorisationModal } from './billing/InsuranceAuthorisationModal';
 import { ReprintInvoiceModal } from './billing/ReprintInvoiceModal';
 import { ReprintAdvanceModal } from './billing/ReprintAdvanceModal';
 
@@ -44,18 +43,26 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
     advancePayments,
     refundPayments,
     insuranceApprovals,
+    patients,
     posTransactions,
     addNotification,
+    currentRole,
   } = useHospital();
 
   const [activeSubTab, setActiveSubTab] = useState<BillingSubTab>('invoices');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [insuranceDateFilter, setInsuranceDateFilter] = useState('');
+  const [insurancePatientFilter, setInsurancePatientFilter] = useState('all');
+  const [insuranceDoctorFilter, setInsuranceDoctorFilter] = useState('all');
+
+  useEffect(() => {
+    if (currentRole !== 'admin' && activeSubTab === 'insurance') setActiveSubTab('invoices');
+  }, [currentRole, activeSubTab]);
 
   // Modal open states
   const [isAdvanceModalOpen, setIsAdvanceModalOpen] = useState(false);
   const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
-  const [isInsuranceModalOpen, setIsInsuranceModalOpen] = useState(false);
   const [isReprintInvoiceOpen, setIsReprintInvoiceOpen] = useState(false);
   const [reprintInvoiceTargetId, setReprintInvoiceTargetId] = useState<string | undefined>(undefined);
   const [isReprintAdvanceOpen, setIsReprintAdvanceOpen] = useState(false);
@@ -102,6 +109,15 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
   const totalApprovedPreAuth = insuranceApprovals
     .filter((approval) => approval.approvalStatus === 'Approved')
     .reduce((sum, approval) => sum + approval.approvedAmount, 0);
+  const insuranceDoctorOptions = [...new Set(insuranceApprovals.map((approval) => approval.doctorName))].sort();
+  const filteredInsuranceApprovals = insuranceApprovals.filter((approval) =>
+    (!insuranceDateFilter || approval.approvalDate === insuranceDateFilter) &&
+    (insurancePatientFilter === 'all' || approval.patientId === insurancePatientFilter) &&
+    (insuranceDoctorFilter === 'all' || approval.doctorName === insuranceDoctorFilter)
+  );
+  const selectedInsurancePatient = patients.find((patient) => patient.id === insurancePatientFilter);
+  const selectedPatientVisits = [...(selectedInsurancePatient?.facilityVisits || [])]
+    .sort((firstVisit, secondVisit) => secondVisit.visitDate.localeCompare(firstVisit.visitDate));
 
   const handlePrint = () => {
     window.print();
@@ -168,14 +184,6 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
           </button>
 
           <button
-            onClick={() => setIsInsuranceModalOpen(true)}
-            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>+ Pre-Auth Approval No.</span>
-          </button>
-
-          <button
             onClick={onOpenNewInvoice}
             className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition cursor-pointer"
           >
@@ -190,7 +198,7 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
         <div className="flex flex-wrap items-center gap-1">
           {[
             { id: 'invoices', label: '1. Invoices & Claims', icon: ReceiptText, count: invoices.length },
-            { id: 'insurance', label: '2. Insurance Approvals & Pre-Auth', icon: ShieldCheck, count: insuranceApprovals.length },
+            ...(currentRole === 'admin' ? [{ id: 'insurance', label: '2. Insurance Approvals & Pre-Auth', icon: ShieldCheck, count: insuranceApprovals.length }] : []),
             { id: 'advance', label: '3. Advance Payments', icon: DollarSign, count: advancePayments.length },
             { id: 'refunds', label: '4. Refund Payments', icon: RotateCcw, count: refundPayments.length },
             { id: 'pos', label: '5. Daily POS Transactions', icon: Terminal, count: posTransactions.length },
@@ -426,7 +434,7 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
       )}
 
       {/* SUB-TAB 2: INSURANCE APPROVALS & PRE-AUTHORISATION */}
-      {activeSubTab === 'insurance' && (
+      {activeSubTab === 'insurance' && currentRole === 'admin' && (
         <div className="space-y-4">
           {/* Header & Metrics */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -457,21 +465,39 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
               <div>
                 <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Authorisation Action
+                  Approval handling
                 </span>
                 <p className="text-xs text-slate-600 mt-1">
-                  Add insurance approval code under attending doctor and procedure/lab/radiology.
+                  Medical Coders review requests and publish insurer decisions. Billing can view the recorded status here.
                 </p>
               </div>
-              <button
-                onClick={() => setIsInsuranceModalOpen(true)}
-                className="mt-2 w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Pre-Authorisation Approval</span>
-              </button>
             </div>
           </div>
+
+          <section aria-label="Filter insurance approvals" className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-[11px] font-semibold text-slate-700">
+              Approval date
+              <input type="date" value={insuranceDateFilter} onChange={(event) => setInsuranceDateFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-2 text-xs font-normal" />
+            </label>
+            <label className="text-[11px] font-semibold text-slate-700">
+              Patient
+              <select value={insurancePatientFilter} onChange={(event) => setInsurancePatientFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal">
+                <option value="all">All patients</option>
+                {patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName} · {patient.id}</option>)}
+              </select>
+            </label>
+            <label className="text-[11px] font-semibold text-slate-700">
+              Attending doctor
+              <select value={insuranceDoctorFilter} onChange={(event) => setInsuranceDoctorFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal">
+                <option value="all">All doctors</option>
+                {insuranceDoctorOptions.map((doctorName) => <option key={doctorName} value={doctorName}>{doctorName}</option>)}
+              </select>
+            </label>
+            <div className="flex items-end justify-between gap-2 text-xs">
+              <span className="pb-2 text-slate-500">{filteredInsuranceApprovals.length} approvals</span>
+              <button type="button" onClick={() => { setInsuranceDateFilter(''); setInsurancePatientFilter('all'); setInsuranceDoctorFilter('all'); }} className="mb-1 rounded-md border border-slate-300 px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Clear filters</button>
+            </div>
+          </section>
 
           {/* Insurance Approvals Table */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
@@ -479,16 +505,9 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-purple-600" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  Insurance Pre-Authorisation & Approval Numbers Registry ({insuranceApprovals.length})
+                  Insurance Pre-Authorisation & Approval Numbers Registry ({filteredInsuranceApprovals.length})
                 </h3>
               </div>
-              <button
-                onClick={() => setIsInsuranceModalOpen(true)}
-                className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>New Authorisation</span>
-              </button>
             </div>
 
             <div className="overflow-x-auto">
@@ -507,7 +526,9 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-normal">
-                  {insuranceApprovals.map((appr) => (
+                  {filteredInsuranceApprovals.length === 0 ? (
+                    <tr><td colSpan={9} className="py-8 text-center text-xs text-slate-500">No insurance approvals match these filters.</td></tr>
+                  ) : filteredInsuranceApprovals.map((appr) => (
                     <tr key={appr.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         <div className="font-mono font-bold text-purple-700">{appr.approvalNumber}</div>
@@ -581,6 +602,46 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
               </table>
             </div>
           </div>
+
+          {selectedInsurancePatient && (
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-2 border-b border-slate-200 bg-slate-50/70 p-3.5 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">Past visits · {selectedInsurancePatient.firstName} {selectedInsurancePatient.lastName}</h3>
+                  <p className="mt-0.5 font-mono text-[10px] text-slate-500">{selectedInsurancePatient.id} · All attending doctors</p>
+                </div>
+                <span className="text-[10px] text-slate-500">{selectedPatientVisits.length} visits</span>
+              </div>
+              {selectedPatientVisits.length === 0 ? (
+                <p className="p-4 text-xs text-slate-500">No past visits are recorded for this patient.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[740px] text-left text-xs">
+                    <thead className="bg-white text-[10px] font-bold uppercase text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2.5">Visit date</th>
+                        <th className="px-3 py-2.5">Doctor</th>
+                        <th className="px-3 py-2.5">Department / Visit</th>
+                        <th className="px-3 py-2.5">Diagnosis</th>
+                        <th className="px-3 py-2.5">Disposition</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedPatientVisits.map((visit) => (
+                        <tr key={visit.id}>
+                          <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-700">{visit.visitDate}</td>
+                          <td className="px-3 py-2.5"><p className="font-semibold text-slate-900">{visit.doctorName}</p><p className="text-[10px] text-slate-500">{visit.doctorSpecialty}</p></td>
+                          <td className="px-3 py-2.5 text-slate-700">{visit.department}<p className="text-[10px] text-slate-500">{visit.visitType}</p></td>
+                          <td className="px-3 py-2.5 text-slate-700">{visit.primaryDiagnosis.code} · {visit.primaryDiagnosis.description}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{visit.disposition}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
 
@@ -1048,11 +1109,6 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
       <RefundPaymentModal
         isOpen={isRefundModalOpen}
         onClose={() => setIsRefundModalOpen(false)}
-      />
-
-      <InsuranceAuthorisationModal
-        isOpen={isInsuranceModalOpen}
-        onClose={() => setIsInsuranceModalOpen(false)}
       />
 
       <ReprintInvoiceModal

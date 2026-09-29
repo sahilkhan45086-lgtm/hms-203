@@ -112,6 +112,11 @@ export const InsuranceAuthorisationModal: React.FC<InsuranceAuthorisationModalPr
       remarks,
     });
 
+    if (!newApproval) {
+      setError('Insurance requests must be submitted by the assigned doctor as Pending. A Medical Coder publishes the insurer decision.');
+      return;
+    }
+
     if (onAuthorisationCreated) {
       onAuthorisationCreated(newApproval);
     }

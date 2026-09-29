@@ -21,7 +21,9 @@ export const MedicalCoderWorkspace: React.FC = () => {
     addLabResult,
     logAuditEvent,
     currentUser,
+    currentRole,
   } = useHospital();
+  const canManageApprovals = currentRole === 'medical-coder';
   const [patientId, setPatientId] = useState(patients[0]?.id || '');
   const [approvalId, setApprovalId] = useState('');
   const [testName, setTestName] = useState('');
@@ -47,7 +49,7 @@ export const MedicalCoderWorkspace: React.FC = () => {
   );
   const selectedApproval = eligibleApprovals.find((approval) => approval.id === approvalId);
 
-  const reviewApproval = (approval: InsuranceApproval, decision: InsuranceApproval['approvalStatus']) => {
+  const reviewApproval = (approval: InsuranceApproval, decision: Exclude<InsuranceApproval['approvalStatus'], 'Approved'>) => {
     const reviewNote = `Reviewed by ${currentUser.name} on ${today()}: ${decision}.`;
     updateInsuranceApprovalStatus(approval.id, decision, reviewNote);
     logAuditEvent('UPDATE', 'Billing Invoice', approval.id, `Medical coder ${decision.toLowerCase()} insurance approval ${approval.approvalNumber}.`);
@@ -188,7 +190,7 @@ export const MedicalCoderWorkspace: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {canReview ? (
+                        {canReview && canManageApprovals ? (
                           <div className="flex flex-wrap gap-1.5">
                             <button type="button" onClick={() => openPublishApproval(approval)} className="inline-flex items-center gap-1 rounded border border-emerald-200 px-2 py-1 font-semibold text-emerald-800 hover:bg-emerald-50">
                               <CheckCircle2 className="h-3 w-3" /> Publish
@@ -213,7 +215,7 @@ export const MedicalCoderWorkspace: React.FC = () => {
         )}
       </section>
 
-      {approvalToPublish && (
+      {canManageApprovals && approvalToPublish && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
           <form onSubmit={handlePublishApproval} className="w-full max-w-lg space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
             <div>
@@ -248,7 +250,7 @@ export const MedicalCoderWorkspace: React.FC = () => {
         </div>
       )}
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      {canManageApprovals && <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
           <FileText className="h-4 w-4 text-teal-700" />
           <h2 className="text-sm font-bold text-slate-900">Publish report to patient file</h2>
@@ -307,7 +309,7 @@ export const MedicalCoderWorkspace: React.FC = () => {
             </button>
           </div>
         </form>
-      </section>
+      </section>}
     </div>
   );
 };
