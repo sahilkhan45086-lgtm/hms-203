@@ -260,10 +260,17 @@ interface HospitalContextType {
   callNextAppointment: (doctorId?: string) => void;
   // Billing Actions
   createInvoice: (invData: Omit<Invoice, 'id' | 'subtotal' | 'patientPayable' | 'amountPaid' | 'balanceDue' | 'transactions'>) => Invoice;
+  issueInvoice: (invoiceId: string) => void;
   processPayment: (invoiceId: string, paymentData: { amount: number; method: PaymentMethod; cardLast4?: string }) => Promise<{ success: boolean; transaction: PaymentTransaction }>;
+  processSplitPayments: (
+    invoiceId: string,
+    payments: Array<{ amount: number; method: PaymentMethod; pointsAuthorizationToken?: string; advanceId?: string }>
+  ) => Promise<PaymentTransaction[]>;
   addAdvancePayment: (data: Omit<AdvancePayment, 'id' | 'receiptNumber'>) => AdvancePayment;
   addRefundPayment: (data: Omit<RefundPayment, 'id' | 'voucherNumber'>) => RefundPayment;
+  reviewRefundPayment: (id: string, decision: 'Approved' | 'Rejected') => void;
   addInsuranceApproval: (data: Omit<InsuranceApproval, 'id'>) => InsuranceApproval | null;
+  addCoderInsuranceApproval: (data: Omit<InsuranceApproval, 'id'>) => InsuranceApproval | null;
   updateInsuranceApprovalStatus: (id: string, status: Exclude<InsuranceApproval['approvalStatus'], 'Approved'>, remarks?: string) => void;
   publishInsuranceApproval: (id: string, details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>) => void;
   addPosTransaction: (data: Omit<PosTransaction, 'id' | 'rrnNumber'>) => PosTransaction;
@@ -909,6 +916,18 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       registrationSource: 'New Registration',
       patientAge: newPatient.age,
       patientGender: newPatient.gender,
+      patientDetails: {
+        dateOfBirth: newPatient.dob,
+        email: newPatient.email,
+        address: newPatient.address,
+        nationalId: newPatient.emiratesId,
+        passportNumber: newPatient.passportNo,
+        insurancePolicyNumber: newPatient.insurance?.policyNumber,
+        insuranceMemberId: newPatient.insurance?.memberId,
+        insuranceStatus: newPatient.insurance?.status,
+        insuranceExpiryDate: newPatient.insurance?.expiryDate,
+        insuranceCards: newPatient.insuranceList,
+      },
       insuranceProvider: newPatient.insurance?.provider || 'Self-Pay',
       payMode: newPatient.payMode || 'Self',
       visitDate: nowIso.split('T')[0],
@@ -1508,16 +1527,19 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       transactions: [],
     };
     setInvoices((prev) => [newInvoice, ...prev]);
+    const primaryDiagnosis = newInvoice.diagnoses?.[0];
     appendPatientVisit(newInvoice.patientId, {
       visitDate: newInvoice.issueDate,
-      doctorName: newInvoice.patientName,
+      doctorName: primaryDiagnosis?.doctorName || newInvoice.patientName,
       doctorSpecialty: 'Billing & Finance',
       department: 'Billing & Claims',
       clinicRoom: 'Cashier / Billing Desk',
       visitType: 'Billing & Claims',
-      chiefComplaint: 'Invoice generated',
-      clinicalAssessment: `Billing record created for ${newInvoice.items.length} service entries.`,
-      primaryDiagnosis: { code: 'BILL-ISSUED', description: 'Invoice generated' },
+      chiefComplaint: primaryDiagnosis?.description || 'Invoice generated',
+      clinicalAssessment: `Billing record created for ${newInvoice.items.length} service entries${newInvoice.encounterTokenId ? ` from visit ${newInvoice.encounterTokenId}` : ''}.`,
+      primaryDiagnosis: primaryDiagnosis
+        ? { code: primaryDiagnosis.code, description: primaryDiagnosis.description }
+        : { code: 'BILL-ISSUED', description: 'Invoice generated without a doctor-entered diagnosis' },
       diagnosticOrders: newInvoice.items.map((item) => item.description),
       medicationsPrescribed: [],
       disposition: 'Follow-up Scheduled',
@@ -1527,7 +1549,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'CREATE',
       'Billing Invoice',
       newInvoice.id,
-      `Created invoice for ${newInvoice.patientName} total $${subtotal}`,
+      `Created ${newInvoice.status.toLowerCase()} ${newInvoice.encounterType || ''} invoice for ${newInvoice.patientName}, total $${subtotal}; services: ${newInvoice.items.map((item) => item.description).join('; ')}; diagnoses: ${(newInvoice.diagnoses || []).map((diagnosis) => `${diagnosis.code} ${diagnosis.description}`).join('; ') || 'none recorded by doctor'}.`,
       'PCI-DSS Payment Log'
     );
     addNotification(
@@ -1537,6 +1559,20 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       newInvoice.id
     );
     return newInvoice;
+  };
+
+  const issueInvoice = (invoiceId: string) => {
+    if (currentRole !== 'admin' && currentRole !== 'receptionist') return;
+    const invoice = invoices.find((item) => item.id === invoiceId && item.status === 'Draft');
+    if (!invoice) return;
+    const status: Invoice['status'] = invoice.insuranceCoveredAmount > 0
+      ? 'Pending Insurance'
+      : invoice.balanceDue <= 0
+      ? 'Paid'
+      : 'Pending';
+    setInvoices((prev) => prev.map((item) => item.id === invoiceId ? { ...item, status } : item));
+    logAuditEvent('UPDATE', 'Billing Invoice', invoiceId, `Invoice issued by ${currentUser.name}. Status set to ${status}.`, 'PCI-DSS Payment Log');
+    addNotification('Invoice Issued', `Invoice ${invoiceId} is now available for settlement.`, 'success', invoiceId);
   };
 
   const processPayment = async (
@@ -1561,7 +1597,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const prevPaid = Number(inv.amountPaid) || 0;
           const payable = Number(inv.patientPayable ?? inv.totalAmount ?? inv.subtotal) || 0;
           const totalPaid = prevPaid + payAmt;
-          const newBalance = Math.max(0, payable - totalPaid);
+          const newBalance = Math.max(0, payable - (totalPaid - (Number(inv.refundedAmount) || 0)));
           const newStatus = newBalance <= 0 ? 'Paid' : 'Partially Paid';
           return {
             ...inv,
@@ -1590,6 +1626,163 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       invoiceId
     );
     return { success: true, transaction: newTxn };
+  };
+
+  const processSplitPayments = async (
+    invoiceId: string,
+    payments: Array<{ amount: number; method: PaymentMethod; pointsAuthorizationToken?: string; advanceId?: string }>
+  ): Promise<PaymentTransaction[]> => {
+    const invoice = invoices.find((item) => item.id === invoiceId);
+    if (!invoice || payments.length === 0) {
+      throw new Error('Select a valid invoice and at least one payment method.');
+    }
+    const total = payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+    if (
+      payments.some((payment) =>
+        !Number.isFinite(Number(payment.amount)) ||
+        Number(payment.amount) <= 0 ||
+        Math.abs(Number(payment.amount) * 100 - Math.round(Number(payment.amount) * 100)) > 0.000001
+      ) ||
+      total > Number(invoice.balanceDue) + 0.001
+    ) {
+      throw new Error('Payment amounts must be positive and cannot exceed the outstanding invoice balance.');
+    }
+    const pointsPayment = payments.filter((payment) => payment.method === 'Loyalty Points');
+    const totalPoints = pointsPayment.reduce((sum, payment) => sum + Math.round(payment.amount * 100), 0);
+    const advancePaymentAmount = payments
+      .filter((payment) => payment.method === 'Patient Advance')
+      .reduce((sum, payment) => sum + Number(payment.amount), 0);
+    const patientAdvances = advancePayments
+      .filter((advance) => advance.patientId === invoice.patientId && advance.remainingBalance > 0)
+      .sort((first, second) =>
+        first.date.localeCompare(second.date) ||
+        first.time.localeCompare(second.time) ||
+        first.id.localeCompare(second.id)
+      );
+    const availableAdvanceBalance = patientAdvances.reduce(
+      (sum, advance) => sum + Math.max(0, Number(advance.remainingBalance) || 0),
+      0
+    );
+    if (advancePaymentAmount > availableAdvanceBalance + 0.001) {
+      throw new Error(`The patient has only $${availableAdvanceBalance.toFixed(2)} available in advance deposits.`);
+    }
+    const requestedByAdvanceId = new Map<string, number>();
+    payments.filter((payment) => payment.method === 'Patient Advance').forEach((payment) => {
+      if (!payment.advanceId) {
+        throw new Error('Select the advance receipt to apply each deposit amount from.');
+      }
+      requestedByAdvanceId.set(
+        payment.advanceId,
+        (requestedByAdvanceId.get(payment.advanceId) || 0) + Number(payment.amount)
+      );
+    });
+    for (const [advanceId, requestedAmount] of requestedByAdvanceId) {
+      const advance = patientAdvances.find((item) => item.id === advanceId);
+      if (!advance || requestedAmount > Number(advance.remainingBalance) + 0.001) {
+        throw new Error('An advance amount exceeds the available balance for its selected receipt.');
+      }
+    }
+    const patient = patients.find((item) => item.id === invoice.patientId);
+    if (pointsPayment.length && pointsPayment.some((payment) => !payment.pointsAuthorizationToken)) {
+      throw new Error('Verify the registered mobile OTP before redeeming loyalty points.');
+    }
+    if (totalPoints > (patient?.loyaltyPoints || 0)) {
+      throw new Error('The patient does not have enough loyalty points for this payment.');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const remainingByAdvanceId = new Map<string, number>(
+      patientAdvances.map((advance): [string, number] => [advance.id, Number(advance.remainingBalance) || 0])
+    );
+    const transactions: PaymentTransaction[] = payments.map((payment) => {
+      const authCode = `AUTH-${Math.floor(100000 + Math.random() * 900000)}-SEC`;
+      const advanceAllocations: NonNullable<PaymentTransaction['advanceAllocations']> = [];
+      if (payment.method === 'Patient Advance') {
+        const advance = patientAdvances.find((item) => item.id === payment.advanceId);
+        if (advance) {
+          const remainingBalance = remainingByAdvanceId.get(advance.id) || 0;
+          const allocatedAmount = Number(payment.amount);
+          advanceAllocations.push({
+            advanceId: advance.id,
+            receiptNumber: advance.receiptNumber,
+            amount: allocatedAmount,
+            utilizedAt: new Date().toISOString(),
+          });
+          remainingByAdvanceId.set(advance.id, remainingBalance - allocatedAmount);
+        }
+      }
+      return {
+        transactionId: `TXN-SEC-${Math.floor(10000 + Math.random() * 90000)}`,
+        timestamp: new Date().toISOString(),
+        amountPaid: Number(payment.amount),
+        method: payment.method,
+        loyaltyPointsRedeemed: payment.method === 'Loyalty Points' ? Math.round(payment.amount * 100) : undefined,
+        advanceAllocations: payment.method === 'Patient Advance' ? advanceAllocations : undefined,
+        authCode,
+        gatewayStatus: 'Success',
+      };
+    });
+    const totalPaid = transactions.reduce((sum, transaction) => sum + transaction.amountPaid, 0);
+    if (advancePaymentAmount > 0) {
+      setAdvancePayments((prev) => prev.map((advance) => {
+        const remainingBalance = remainingByAdvanceId.get(advance.id);
+        if (remainingBalance === undefined) return advance;
+        const utilizationHistory = transactions.flatMap((transaction) =>
+          (transaction.advanceAllocations || [])
+            .filter((allocation) => allocation.advanceId === advance.id)
+            .map((allocation) => ({
+              invoiceId,
+              transactionId: transaction.transactionId,
+              date: allocation.utilizedAt,
+              amount: allocation.amount,
+            }))
+        );
+        return {
+          ...advance,
+          remainingBalance: Math.max(0, remainingBalance),
+          utilizationHistory: [...(advance.utilizationHistory || []), ...utilizationHistory],
+          status: remainingBalance <= 0 ? 'Utilized' : 'Partially Utilized',
+        };
+      }));
+    }
+    if (totalPoints > 0) {
+      setPatients((prev) => prev.map((item) => item.id === invoice.patientId
+        ? { ...item, loyaltyPoints: Math.max(0, (item.loyaltyPoints || 0) - totalPoints) }
+        : item
+      ));
+    }
+    setInvoices((prev) =>
+      prev.map((item) => {
+        if (item.id !== invoiceId) return item;
+        const paid = (Number(item.amountPaid) || 0) + totalPaid;
+        const balanceDue = Math.max(0, (Number(item.patientPayable) || 0) - (paid - (Number(item.refundedAmount) || 0)));
+        return {
+          ...item,
+          amountPaid: paid,
+          paidAmount: paid,
+          balanceDue,
+          status: balanceDue <= 0 ? 'Paid' : 'Partially Paid',
+          paymentMethod: transactions[transactions.length - 1].method,
+          transactions: [...(item.transactions || []), ...transactions],
+        };
+      })
+    );
+    transactions.forEach((transaction) => {
+      logAuditEvent(
+        'UPDATE',
+        'Billing Invoice',
+        invoiceId,
+        `Payment of $${transaction.amountPaid.toFixed(2)} settled via ${transaction.method} (${transaction.authCode})${transaction.advanceAllocations?.length ? `; advance receipts applied: ${transaction.advanceAllocations.map((allocation) => `${allocation.receiptNumber} $${allocation.amount.toFixed(2)}`).join(', ')}` : ''}`,
+        'PCI-DSS Payment Log'
+      );
+    });
+    addNotification(
+      'Payment Processed Successfully',
+      `Split payment of $${totalPaid.toFixed(2)} recorded for invoice ${invoiceId}${advancePaymentAmount ? `; $${advancePaymentAmount.toFixed(2)} applied from advance deposits` : ''}${totalPoints ? `; ${totalPoints} loyalty points redeemed` : ''}.`,
+      'success',
+      invoiceId
+    );
+    return transactions;
   };
 
   const addAdvancePayment = (data: Omit<AdvancePayment, 'id' | 'receiptNumber'>): AdvancePayment => {
@@ -1654,36 +1847,106 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     setRefundPayments((prev) => [newRecord, ...prev]);
 
-    // If refunded against an advance deposit, adjust remaining balance
-    if (data.originalReferenceType === 'Advance Deposit') {
-      setAdvancePayments((prev) =>
-        prev.map((adv) => {
-          if (adv.id === data.originalReferenceId || adv.receiptNumber === data.originalReferenceId) {
-            const newBal = Math.max(0, adv.remainingBalance - data.amount);
-            return {
-              ...adv,
-              remainingBalance: newBal,
-              status: newBal === 0 ? 'Refunded' : 'Partially Utilized',
-            };
-          }
-          return adv;
-        })
-      );
-    }
-
     addNotification(
-      'Refund Voucher Issued',
-      `Voucher ${voucherNumber} processed for ${data.patientName}: $${data.amount.toFixed(2)} (${data.reason}) via ${data.refundMethod}.`,
+      'Refund Submitted for Approval',
+      `Refund request ${voucherNumber} for ${data.patientName}: $${data.amount.toFixed(2)} is awaiting manager approval.`,
       'info'
     );
     logAuditEvent(
-      'UPDATE',
+      'CREATE',
       'Billing Invoice',
       newId,
-      `Disbursed refund of $${data.amount} to ${data.patientName}. Voucher ${voucherNumber}`,
+      `Refund request of $${data.amount} submitted for ${data.patientName}. Voucher ${voucherNumber} is pending manager approval.`,
       'PCI-DSS Payment Log'
     );
     return newRecord;
+  };
+
+  const reviewRefundPayment = (id: string, decision: 'Approved' | 'Rejected') => {
+    if (currentRole !== 'admin') return;
+    const refund = refundPayments.find((item) => item.id === id && item.status === 'Pending Approval');
+    if (!refund) return;
+    const sourceAdvance = refund.originalReferenceType === 'Advance Deposit'
+      ? advancePayments.find((item) => item.id === refund.originalReferenceId || item.receiptNumber === refund.originalReferenceId)
+      : undefined;
+    const sourceInvoice = refund.originalReferenceType !== 'Advance Deposit'
+      ? invoices.find((item) => item.id === refund.originalReferenceId)
+      : undefined;
+    if (decision === 'Approved' && refund.originalReferenceType === 'Advance Deposit' && (!sourceAdvance || sourceAdvance.remainingBalance < refund.amount)) {
+      addNotification(
+        'Refund Approval Blocked',
+        `Voucher ${refund.voucherNumber} exceeds the remaining advance balance and cannot be approved.`,
+        'warning'
+      );
+      return;
+    }
+    if (
+      decision === 'Approved' &&
+      refund.originalReferenceType !== 'Advance Deposit' &&
+      (!sourceInvoice || (Number(sourceInvoice.amountPaid) || 0) - (Number(sourceInvoice.refundedAmount) || 0) < refund.amount)
+    ) {
+      addNotification(
+        'Refund Approval Blocked',
+        `Voucher ${refund.voucherNumber} exceeds the refundable paid balance and cannot be approved.`,
+        'warning'
+      );
+      return;
+    }
+    setRefundPayments((prev) => prev.map((item) =>
+      item.id === id
+        ? { ...item, status: decision === 'Approved' ? 'Completed' : 'Rejected', authorizedBy: currentUser.name }
+        : item
+    ));
+    if (decision === 'Approved' && refund.originalReferenceType === 'Advance Deposit') {
+      setAdvancePayments((prev) => prev.map((advance) => {
+        if (advance.id !== refund.originalReferenceId && advance.receiptNumber !== refund.originalReferenceId) return advance;
+        const remainingBalance = Math.max(0, advance.remainingBalance - refund.amount);
+        return {
+          ...advance,
+          remainingBalance,
+          status: remainingBalance === 0 ? 'Refunded' : 'Partially Utilized',
+        };
+      }));
+    }
+    if (decision === 'Approved' && sourceInvoice) {
+      setInvoices((prev) => prev.map((invoice) => {
+        if (invoice.id !== sourceInvoice.id) return invoice;
+        const refundedAmount = (Number(invoice.refundedAmount) || 0) + refund.amount;
+        const cancelledService = refund.originalReferenceType === 'Service Cancellation';
+        const patientPayable = Math.max(
+          0,
+          (Number(invoice.patientPayable) || 0) - (cancelledService ? refund.amount : 0)
+        );
+        const balanceDue = Math.max(0, patientPayable - ((Number(invoice.amountPaid) || 0) - refundedAmount));
+        return {
+          ...invoice,
+          refundedAmount,
+          ...(cancelledService ? {
+            patientPayable,
+            subtotal: Math.max(0, invoice.subtotal - refund.amount),
+            totalAmount: Math.max(0, (Number(invoice.totalAmount) || invoice.subtotal) - refund.amount),
+          } : {}),
+          balanceDue,
+          status: patientPayable === 0 && refundedAmount >= (Number(invoice.amountPaid) || 0)
+            ? 'Refunded'
+            : balanceDue === 0
+            ? 'Paid'
+            : 'Partially Paid',
+        };
+      }));
+    }
+    logAuditEvent(
+      'UPDATE',
+      'Billing Invoice',
+      id,
+      `Finance manager ${currentUser.name} ${decision.toLowerCase()} refund voucher ${refund.voucherNumber}.`,
+      'PCI-DSS Payment Log'
+    );
+    addNotification(
+      `Refund ${decision}`,
+      `${refund.voucherNumber} was ${decision.toLowerCase()} by ${currentUser.name}.`,
+      decision === 'Approved' ? 'success' : 'warning'
+    );
   };
 
   const addInsuranceApproval = (data: Omit<InsuranceApproval, 'id'>): InsuranceApproval | null => {
@@ -1705,6 +1968,34 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'Billing Invoice',
       newId,
       `${data.approvalStatus === 'Pending' ? 'Requested' : 'Linked'} pre-authorisation #${data.approvalNumber} for ${data.patientName} under ${data.doctorName}`,
+      'HIPAA Access Log'
+    );
+    return newRecord;
+  };
+
+  const addCoderInsuranceApproval = (data: Omit<InsuranceApproval, 'id'>): InsuranceApproval | null => {
+    if (
+      currentRole !== 'medical-coder' ||
+      data.approvalStatus !== 'Approved' ||
+      !data.approvalNumber.trim() ||
+      !patients.some((patient) => patient.id === data.patientId)
+    ) {
+      return null;
+    }
+    const seq = insuranceApprovals.length + 1;
+    const newId = `APP-${new Date().getFullYear()}-${String(seq).padStart(3, '0')}`;
+    const newRecord: InsuranceApproval = { ...data, id: newId };
+    setInsuranceApprovals((prev) => [newRecord, ...prev]);
+    addNotification(
+      'Insurance Approval Recorded',
+      `Authorization ${data.approvalNumber} recorded for ${data.patientName} under ${data.department}.`,
+      'success'
+    );
+    logAuditEvent(
+      'CREATE',
+      'Billing Invoice',
+      newId,
+      `Medical coder ${currentUser.name} recorded insurer approval ${data.approvalNumber} for ${data.patientName} under ${data.department}.`,
       'HIPAA Access Log'
     );
     return newRecord;
@@ -1778,8 +2069,27 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const now = new Date();
     const nowDate = now.toISOString().split('T')[0];
     const nowTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const patient = patients.find((item) => item.id === data.patientId);
     const newRecord: ReceptionToken = {
       ...data,
+      patientPhone: data.patientPhone || patient?.phone,
+      patientAge: data.patientAge ?? patient?.age,
+      patientGender: data.patientGender || patient?.gender,
+      insuranceProvider: data.insuranceProvider || patient?.insurance?.provider || 'Self-Pay',
+      payMode: data.payMode || patient?.payMode || 'Self',
+      department: data.department || patient?.department || 'General Medicine',
+      patientDetails: data.patientDetails || (patient ? {
+        dateOfBirth: patient.dob,
+        email: patient.email,
+        address: patient.address,
+        nationalId: patient.emiratesId,
+        passportNumber: patient.passportNo,
+        insurancePolicyNumber: patient.insurance?.policyNumber,
+        insuranceMemberId: patient.insurance?.memberId,
+        insuranceStatus: patient.insurance?.status,
+        insuranceExpiryDate: patient.insurance?.expiryDate,
+        insuranceCards: patient.insuranceList,
+      } : undefined),
       id,
       tokenNumber,
       createdDate: nowDate,
@@ -2539,10 +2849,14 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateAppointmentStatus,
         callNextAppointment,
         createInvoice,
+        issueInvoice,
         processPayment,
+        processSplitPayments,
         addAdvancePayment,
         addRefundPayment,
+        reviewRefundPayment,
         addInsuranceApproval,
+        addCoderInsuranceApproval,
         updateInsuranceApprovalStatus,
         addPosTransaction,
         createReceptionToken,

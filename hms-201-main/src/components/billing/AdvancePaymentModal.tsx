@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, DollarSign, CreditCard, User, Building, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, DollarSign, CreditCard, Building, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useHospital } from '../../context/HospitalContext';
 import { AdvancePayment } from '../../types';
+import { PatientLookup } from './PatientLookup';
 
 interface AdvancePaymentModalProps {
   isOpen: boolean;
@@ -14,9 +15,9 @@ export const AdvancePaymentModal: React.FC<AdvancePaymentModalProps> = ({
   onClose,
   onPaymentCreated,
 }) => {
-  const { patients, addAdvancePayment, currentUser } = useHospital();
+  const { patients, receptionTokens, addAdvancePayment, currentUser } = useHospital();
 
-  const [patientId, setPatientId] = useState(patients[0]?.id || '');
+  const [patientId, setPatientId] = useState('');
   const [amount, setAmount] = useState('500.00');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit/Debit Card' | 'Wire Transfer'>('Credit/Debit Card');
   const [terminalId, setTerminalId] = useState('POS-TERM-01 (Verifone)');
@@ -25,9 +26,13 @@ export const AdvancePaymentModal: React.FC<AdvancePaymentModalProps> = ({
   const [cashierName, setCashierName] = useState(currentUser?.name || 'Chloe Bennett (Reception Desk A)');
   const [error, setError] = useState('');
 
+  React.useEffect(() => {
+    if (isOpen) setPatientId('');
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const selectedPatient = patients.find((p) => p.id === patientId) || patients[0];
+  const selectedPatient = patients.find((p) => p.id === patientId);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,23 +106,13 @@ export const AdvancePaymentModal: React.FC<AdvancePaymentModalProps> = ({
           )}
 
           {/* Patient Selection */}
-          <div>
-            <label className="block font-bold text-slate-700 mb-1">Select Patient / MRN</label>
-            <div className="relative">
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <select
-                value={patientId}
-                onChange={(e) => setPatientId(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500/20"
-              >
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.firstName} {p.lastName} (MRN: {p.id}) - {p.gender}, {p.age}y
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <PatientLookup
+            patients={patients}
+            tokens={receptionTokens}
+            selectedPatientId={patientId}
+            onSelect={setPatientId}
+            accent="emerald"
+          />
 
           {/* Amount & Purpose */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

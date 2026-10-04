@@ -36,6 +36,8 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
 }) => {
   const {
     patients,
+    advancePayments,
+    receptionTokens,
     selectedPatientId,
     setSelectedPatientId,
     updatePatientStatus,
@@ -51,7 +53,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [patientViewTab, setPatientViewTab] = useState<'dashboard' | 'previous' | 'notes' | 'prescriptions' | 'services' | 'reports' | 'all'>('dashboard');
+  const [patientViewTab, setPatientViewTab] = useState<'dashboard' | 'previous' | 'notes' | 'prescriptions' | 'services' | 'reports' | 'advances' | 'all'>('dashboard');
 
   // New Note Form State
   const [chiefComplaint, setChiefComplaint] = useState('');
@@ -114,6 +116,30 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
           status: m.status,
         }))) || [];
   const patientServices = selectedPatient?.services || [];
+  const currentVisitToken = receptionTokens
+    .filter((token) =>
+      token.patientId === selectedPatient?.id &&
+      token.status !== 'Completed' &&
+      token.status !== 'Cancelled' &&
+      (token.visitDate || token.createdDate) === new Date().toISOString().slice(0, 10)
+    )
+    .sort((first, second) => second.createdTime.localeCompare(first.createdTime))[0];
+  const patientAdvancePayments = advancePayments
+    .filter((advance) => advance.patientId === selectedPatient?.id)
+    .sort((first, second) =>
+      second.date.localeCompare(first.date) ||
+      second.time.localeCompare(first.time) ||
+      second.id.localeCompare(first.id)
+    );
+  const totalPatientAdvances = patientAdvancePayments.reduce(
+    (sum, advance) => sum + Math.max(0, Number(advance.amount) || 0),
+    0
+  );
+  const availablePatientAdvances = patientAdvancePayments.reduce(
+    (sum, advance) => sum + Math.max(0, Number(advance.remainingBalance) || 0),
+    0
+  );
+  const canViewPatientBilling = currentRole === 'admin' || currentRole === 'receptionist';
   const patientServiceApprovals = insuranceApprovals.filter((approval) => approval.patientId === selectedPatient?.id);
 
   const filteredPatients = assignedPatients.filter((p) => {
@@ -183,6 +209,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
       estimatedCost: Number(serviceCost),
       addedAt: new Date().toISOString(),
       addedBy: currentUser.name,
+      encounterTokenId: currentVisitToken?.id,
     };
     updatePatient(selectedPatient.id, { services: [...patientServices, service] });
     addNotification('Patient Service Added', `${service.name} added to ${selectedPatient.firstName} ${selectedPatient.lastName}'s record.`, 'info', selectedPatient.id);
@@ -218,6 +245,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
       authorisedBy: currentUser.name,
       remarks: 'Requested by attending physician; awaiting medical coder review.',
       serviceRecordId: service.id,
+      encounterTokenId: service.encounterTokenId,
     });
     if (!request) {
       addNotification('Authorization Request Not Sent', 'Only the assigned doctor can submit a pending insurance authorization request.', 'warning', selectedPatient.id);
@@ -517,6 +545,22 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   <span>Services ({patientServices.length})</span>
                 </button>
 
+                {canViewPatientBilling && (
+                  <button
+                    type="button"
+                    aria-pressed={patientViewTab === 'advances'}
+                    onClick={() => setPatientViewTab('advances')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      patientViewTab === 'advances'
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CircleDollarSign className="w-3.5 h-3.5" />
+                    <span>Advances ({patientAdvancePayments.length})</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   aria-pressed={patientViewTab === 'reports'}
@@ -544,6 +588,82 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   <span>Full chart</span>
                 </button>
             </nav>
+
+            {patientViewTab === 'advances' && canViewPatientBilling && (
+              <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-200 bg-slate-50/70 p-4">
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Patient advance deposits</h3>
+                      <p className="mt-0.5 text-xs text-slate-500">Receipts listed by collection date. Available funds can be applied during invoice settlement.</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-slate-500">Total collected</p>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-slate-900">${totalPatientAdvances.toFixed(2)}</p>
+                      </div>
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-emerald-700">Available balance</p>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-800">${availablePatientAdvances.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {patientAdvancePayments.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-500">No advance deposits have been collected for this patient.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-left text-xs">
+                      <thead className="bg-white text-[10px] font-bold uppercase text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2.5">Collection date</th>
+                          <th className="px-3 py-2.5">Receipt</th>
+                          <th className="px-3 py-2.5">Purpose</th>
+                          <th className="px-3 py-2.5">Payment method</th>
+                          <th className="px-3 py-2.5 text-right">Collected</th>
+                          <th className="px-3 py-2.5 text-right">Available</th>
+                          <th className="px-3 py-2.5">Utilized date & amount</th>
+                          <th className="px-3 py-2.5">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {patientAdvancePayments.map((advance) => (
+                          <tr key={advance.id}>
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-700">{advance.date}{advance.time ? ` · ${advance.time}` : ''}</td>
+                            <td className="px-3 py-2.5 font-mono font-semibold text-slate-800">{advance.receiptNumber}</td>
+                            <td className="px-3 py-2.5 text-slate-700">{advance.purpose}</td>
+                            <td className="px-3 py-2.5 text-slate-700">{advance.paymentMethod}</td>
+                            <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-800">${Number(advance.amount).toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700">${Number(advance.remainingBalance).toFixed(2)}</td>
+                            <td className="px-3 py-2.5">
+                              {advance.utilizationHistory?.length ? (
+                                <div className="space-y-0.5">
+                                  {[...advance.utilizationHistory]
+                                    .sort((first, second) => second.date.localeCompare(first.date))
+                                    .map((utilization) => (
+                                      <p key={`${utilization.transactionId}-${utilization.date}`} className="whitespace-nowrap text-[10px] text-slate-700">
+                                        {new Date(utilization.date).toLocaleString()} · <span className="font-mono font-semibold">${utilization.amount.toFixed(2)}</span>
+                                        <span className="ml-1 font-mono text-slate-400">{utilization.invoiceId}</span>
+                                      </p>
+                                    ))}
+                                </div>
+                              ) : <span className="text-slate-400">Not utilized</span>}
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-700">{advance.status}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50 font-bold">
+                          <td className="px-3 py-2.5 text-slate-700" colSpan={4}>Total</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-slate-900">${totalPatientAdvances.toFixed(2)}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-emerald-800">${availablePatientAdvances.toFixed(2)}</td>
+                          <td className="px-3 py-2.5 text-slate-600" colSpan={2}>{patientAdvancePayments.length} receipts</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
 
             {patientViewTab === 'services' && (
               <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

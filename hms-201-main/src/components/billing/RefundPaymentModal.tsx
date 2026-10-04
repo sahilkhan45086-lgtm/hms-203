@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, RotateCcw, AlertTriangle, CheckCircle2, User, FileText } from 'lucide-react';
+import { X, RotateCcw, AlertTriangle, CheckCircle2, FileText } from 'lucide-react';
 import { useHospital } from '../../context/HospitalContext';
 import { RefundPayment } from '../../types';
+import { PatientLookup } from './PatientLookup';
 
 interface RefundPaymentModalProps {
   isOpen: boolean;
@@ -14,27 +15,38 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
   onClose,
   onRefundCreated,
 }) => {
-  const { patients, advancePayments, invoices, addRefundPayment, currentUser } = useHospital();
+  const { patients, receptionTokens, advancePayments, invoices, addRefundPayment, currentUser } = useHospital();
 
-  const [patientId, setPatientId] = useState(patients[0]?.id || '');
+  const [patientId, setPatientId] = useState('');
   const [refundSource, setRefundSource] = useState<'Advance Deposit' | 'Invoice Overpayment' | 'Service Cancellation'>('Advance Deposit');
   const [selectedAdvanceId, setSelectedAdvanceId] = useState('');
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
   const [amount, setAmount] = useState('100.00');
-  const [refundMethod, setRefundMethod] = useState<'Cash' | 'Credit/Debit Card Reversal' | 'Original Method'>('Cash');
-  const [reason, setReason] = useState<'Procedure Cancelled' | 'Overpayment' | 'Discharge Deposit Refund' | 'Physician Non-Availability' | 'Billing Adjustment'>('Procedure Cancelled');
-  const [authorizedBy, setAuthorizedBy] = useState('Robert Stirling (Finance Lead)');
+  const [refundMethod, setRefundMethod] = useState<'Cash' | 'Card Reversal' | 'Bank Transfer' | 'Cheque'>('Cash');
+  const [reason, setReason] = useState<RefundPayment['reason']>('Procedure Cancelled');
   const [cashierName, setCashierName] = useState(currentUser?.name || 'Chloe Bennett (Reception Desk A)');
   const [notes, setNotes] = useState('Patient requested elective procedure cancellation 24h prior.');
   const [error, setError] = useState('');
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setPatientId('');
+      setSelectedAdvanceId('');
+      setSelectedInvoiceId('');
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const selectedPatient = patients.find((p) => p.id === patientId) || patients[0];
+  const selectedPatient = patients.find((p) => p.id === patientId);
   const patientAdvances = advancePayments.filter((a) => a.patientId === selectedPatient?.id && a.remainingBalance > 0);
-  const patientInvoices = invoices.filter((i) => i.patientId === selectedPatient?.id && (i.amountPaid || 0) > 0);
+  const patientInvoices = invoices.filter((invoice) =>
+    invoice.patientId === selectedPatient?.id &&
+    (Number(invoice.amountPaid) || 0) - (Number(invoice.refundedAmount) || 0) > 0
+  );
 
   const activeAdvance = patientAdvances.find((a) => a.id === selectedAdvanceId) || patientAdvances[0];
+  const activeInvoice = patientInvoices.find((invoice) => invoice.id === selectedInvoiceId);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,6 +73,17 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
         return;
       }
     }
+    if (refundSource !== 'Advance Deposit') {
+      if (!activeInvoice) {
+        setError('Select the paid invoice related to this refund.');
+        return;
+      }
+      const refundableAmount = (Number(activeInvoice.amountPaid) || 0) - (Number(activeInvoice.refundedAmount) || 0);
+      if (parsedAmount > refundableAmount) {
+        setError(`Refund cannot exceed the remaining paid balance on this invoice ($${refundableAmount.toFixed(2)}).`);
+        return;
+      }
+    }
 
     const today = new Date().toISOString().split('T')[0];
     const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -80,9 +103,9 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
       reason,
       date: today,
       time,
-      authorizedBy,
+      authorizedBy: 'Pending manager approval',
       cashierName,
-      status: 'Completed',
+      status: 'Pending Approval',
       notes,
     });
 
@@ -124,23 +147,17 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
           )}
 
           {/* Patient Selection */}
-          <div>
-            <label className="block font-bold text-slate-700 mb-1">Patient</label>
-            <div className="relative">
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <select
-                value={patientId}
-                onChange={(e) => setPatientId(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-rose-500/20"
-              >
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.firstName} {p.lastName} (MRN: {p.id})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <PatientLookup
+            patients={patients}
+            tokens={receptionTokens}
+            selectedPatientId={patientId}
+            onSelect={(id) => {
+              setPatientId(id);
+              setSelectedAdvanceId('');
+              setSelectedInvoiceId('');
+            }}
+            accent="rose"
+          />
 
           {/* Refund Source & Reference */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -193,7 +210,7 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
                   <option value="">Select Invoice...</option>
                   {patientInvoices.map((inv) => (
                     <option key={inv.id} value={inv.id}>
-                      {inv.id} (Paid: ${(inv.amountPaid || 0).toFixed(2)})
+                      {inv.id} (Paid: ${((Number(inv.amountPaid) || 0) - (Number(inv.refundedAmount) || 0)).toFixed(2)})
                     </option>
                   ))}
                 </select>
@@ -232,8 +249,9 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-rose-500/20"
               >
                 <option value="Cash">Cash (Disbursed from Front Desk)</option>
-                <option value="Credit/Debit Card Reversal">Card Terminal Reversal</option>
-                <option value="Original Method">Original Payment Method</option>
+                <option value="Card Reversal">Card Terminal Reversal</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Cheque">Cheque</option>
               </select>
             </div>
           </div>
@@ -248,22 +266,17 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium"
               >
                 <option value="Procedure Cancelled">Procedure Cancelled</option>
-                <option value="Overpayment">Overpayment / Double Charge</option>
-                <option value="Discharge Deposit Refund">Discharge Deposit Balance Refund</option>
-                <option value="Physician Non-Availability">Physician Non-Availability</option>
-                <option value="Billing Adjustment">Billing Adjustment</option>
+                <option value="Duplicate Charge">Duplicate charge</option>
+                <option value="Insurance Overpayment">Insurance overpayment</option>
+                <option value="Excess Advance Deposit">Excess advance deposit</option>
+                <option value="Service Cancelled">Service cancelled</option>
+                <option value="Doctor Unavailable">Doctor unavailable</option>
+                <option value="Patient Request">Patient request</option>
               </select>
             </div>
 
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Authorized By (Manager/Finance)</label>
-              <input
-                type="text"
-                value={authorizedBy}
-                onChange={(e) => setAuthorizedBy(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium"
-                required
-              />
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+              This request will remain pending until an administrator approves it. No advance balance is changed before approval.
             </div>
           </div>
 
@@ -293,7 +306,7 @@ export const RefundPaymentModal: React.FC<RefundPaymentModalProps> = ({
               className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>Authorize & Disburse Refund</span>
+              <span>Submit for manager approval</span>
             </button>
           </div>
         </form>

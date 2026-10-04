@@ -40,6 +40,7 @@ interface TokenWorkflowModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenPatientFile?: (patientId: string) => void;
+  initialStage?: TokenWorkflowStage;
 }
 
 const STAGES: Array<{
@@ -98,6 +99,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   isOpen,
   onClose,
   onOpenPatientFile,
+  initialStage,
 }) => {
   const {
     updateTokenVitals,
@@ -159,7 +161,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
 
   useEffect(() => {
     if (token) {
-      setActiveTab(token.currentStage || '1_REGISTRATION');
+      setActiveTab(initialStage || token.currentStage || '1_REGISTRATION');
       if (token.vitals) {
         setBpSystolic(token.vitals.bpSystolic);
         setBpDiastolic(token.vitals.bpDiastolic);
@@ -183,7 +185,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
         if (token.doctorOrders.procedureRequests?.length) setProcedureOrders(token.doctorOrders.procedureRequests);
       }
     }
-  }, [token]);
+  }, [token?.id, isOpen, initialStage]);
 
   if (!isOpen || !token) return null;
 

@@ -111,6 +111,7 @@ export interface PatientService {
   estimatedCost: number;
   addedAt: string;
   addedBy: string;
+  encounterTokenId?: string;
   insuranceApprovalId?: string;
 }
 
@@ -270,6 +271,7 @@ export interface Patient {
   peopleOfDetermination?: boolean;
   isTelehealthPatient?: boolean;
   isHomeCarePatient?: boolean;
+  loyaltyPoints?: number;
   isPriority?: boolean;
   painScale?: { hasPain: boolean; score?: number };
   riskOfFall?: boolean;
@@ -426,8 +428,16 @@ export interface BillItem {
   totalPrice?: number;
 }
 
-export type PaymentStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Insurance Processing' | 'Refunded';
-export type PaymentMethod = 'Credit/Debit Card' | 'HSA/FSA' | 'Direct Insurance' | 'ACH/Bank Transfer' | 'Cash';
+export type PaymentStatus =
+  | 'Draft'
+  | 'Pending'
+  | 'Pending Insurance'
+  | 'Partially Paid'
+  | 'Paid'
+  | 'Overdue'
+  | 'Insurance Processing'
+  | 'Refunded';
+export type PaymentMethod = 'Credit/Debit Card' | 'HSA/FSA' | 'Direct Insurance' | 'ACH/Bank Transfer' | 'Cash' | 'Loyalty Points' | 'Patient Advance';
 
 export interface PaymentTransaction {
   transactionId: string;
@@ -435,6 +445,8 @@ export interface PaymentTransaction {
   amountPaid: number;
   method: PaymentMethod;
   cardLast4?: string;
+  loyaltyPointsRedeemed?: number;
+  advanceAllocations?: Array<{ advanceId: string; receiptNumber: string; amount: number; utilizedAt: string }>;
   authCode: string;
   gatewayStatus: 'Success' | 'Declined' | 'Pending Verification';
   receiptUrl?: string;
@@ -452,6 +464,7 @@ export interface AdvancePayment {
   time: string;
   purpose: 'Inpatient Bed Admission' | 'OT / Surgical Deposit' | 'Maternity Package Advance' | 'OPD Retainer' | 'ICU High-Acuity Deposit' | 'General';
   remainingBalance: number;
+  utilizationHistory?: Array<{ invoiceId: string; transactionId: string; date: string; amount: number }>;
   status: 'Active' | 'Utilized' | 'Partially Utilized' | 'Refunded';
   cashierName: string;
   terminalId?: string;
@@ -467,7 +480,14 @@ export interface RefundPayment {
   originalReferenceId: string;
   amount: number;
   refundMethod: 'Cash' | 'Card Reversal' | 'Bank Transfer' | 'Cheque';
-  reason: 'Doctor Unavailable' | 'Procedure Cancelled' | 'Excess Advance Deposit' | 'Duplicate Charge' | 'Patient Request';
+  reason:
+    | 'Doctor Unavailable'
+    | 'Procedure Cancelled'
+    | 'Excess Advance Deposit'
+    | 'Duplicate Charge'
+    | 'Patient Request'
+    | 'Service Cancelled'
+    | 'Insurance Overpayment';
   date: string;
   time: string;
   authorizedBy: string;
@@ -496,6 +516,7 @@ export interface InsuranceApproval {
   copayAmount: number;
   approvalStatus: 'Approved' | 'Pending' | 'Query Raised' | 'Rejected';
   serviceRecordId?: string;
+  encounterTokenId?: string;
   approvalDate: string;
   validUntil: string;
   authorisedBy: string;
@@ -645,6 +666,18 @@ export interface ReceptionToken {
   registrationSource?: 'New Registration' | 'Existing Patient' | 'Walk-in' | 'Appointment';
   patientAge?: number;
   patientGender?: string;
+  patientDetails?: {
+    dateOfBirth?: string;
+    email?: string;
+    address?: string;
+    nationalId?: string;
+    passportNumber?: string;
+    insurancePolicyNumber?: string;
+    insuranceMemberId?: string;
+    insuranceStatus?: InsurancePolicy['status'];
+    insuranceExpiryDate?: string;
+    insuranceCards?: DetailedInsuranceRecord[];
+  };
   insuranceProvider?: string;
   payMode?: 'Self' | 'Insurance' | 'Discount Card' | 'Company';
   visitDate?: string;
@@ -663,9 +696,12 @@ export interface Invoice {
   id: string; // INV-2026-0081
   patientId: string;
   patientName: string;
+  encounterType?: 'OPD' | 'IPD';
   patientPhone: string;
   patientEmail: string;
   appointmentId?: string;
+  encounterTokenId?: string;
+  diagnoses?: Array<{ code: string; description: string; doctorName: string; orderedAt: string }>;
   issueDate: string;
   invoiceTime?: string; // e.g. "10:15:30 AM"
   createdAt?: string; // ISO timestamp string
@@ -675,6 +711,7 @@ export interface Invoice {
   tax: number;
   totalAmount?: number;
   paidAmount?: number;
+  refundedAmount?: number;
   insuranceCoveredAmount: number;
   insuranceCovered?: number;
   copayAmount: number;

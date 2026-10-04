@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, ReceiptText, Plus, Trash2, DollarSign, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { X, ReceiptText, Plus, Trash2, DollarSign, ShieldCheck, CheckCircle2, Stethoscope } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
 import { BillItem } from '../types';
+import { PatientLookup } from './billing/PatientLookup';
 
 interface NewInvoiceModalProps {
   isOpen: boolean;
@@ -9,27 +10,31 @@ interface NewInvoiceModalProps {
 }
 
 export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClose }) => {
-  const { patients, createInvoice, addNotification } = useHospital();
+  const { patients, receptionTokens, createInvoice, addNotification } = useHospital();
 
-  const [patientId, setPatientId] = useState(patients[0]?.id || '');
-  const [items, setItems] = useState<BillItem[]>([
-    {
-      id: 'ITM-01',
-      description: 'Consultation — Attending Physician Clinical Review',
-      category: 'Consultation',
-      unitCost: 150.0,
-      quantity: 1,
-      amount: 150.0,
-      totalPrice: 150.0,
-    },
-  ]);
-  const [insuranceCovered, setInsuranceCovered] = useState(120.0);
+  const [patientId, setPatientId] = useState('');
+  const [encounterType, setEncounterType] = useState<'OPD' | 'IPD'>('OPD');
+  const [selectedTokenId, setSelectedTokenId] = useState('');
+  const [items, setItems] = useState<BillItem[]>([]);
+  const [diagnoses, setDiagnoses] = useState<Array<{ code: string; description: string; doctorName: string; orderedAt: string }>>([]);
+  const [insuranceCovered, setInsuranceCovered] = useState(0);
+  const [copayAmount, setCopayAmount] = useState(25);
   const [itemDesc, setItemDesc] = useState('');
   const [itemCategory, setItemCategory] = useState<BillItem['category']>('Consultation');
   const [itemPrice, setItemPrice] = useState(75.0);
+  const [formError, setFormError] = useState('');
+  const selectedPatient = patients.find((patient) => patient.id === patientId);
+  const patientTokens = receptionTokens.filter((token) => token.patientId === patientId && token.doctorOrders);
+  const selectedToken = patientTokens.find((token) => token.id === selectedTokenId);
 
   useEffect(() => {
     if (!isOpen) return;
+    setPatientId('');
+    setSelectedTokenId('');
+    setItems([]);
+    setDiagnoses([]);
+    setInsuranceCovered(0);
+    setCopayAmount(25);
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -42,8 +47,16 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
   if (!isOpen) return null;
 
   const handleAddItem = () => {
-    if (!itemDesc.trim()) return;
-    const price = Number(itemPrice) || 0;
+    setFormError('');
+    if (!itemDesc.trim()) {
+      setFormError('Enter a description for the charge.');
+      return;
+    }
+    const price = Number(itemPrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      setFormError('Charge amount must be greater than zero.');
+      return;
+    }
     const newItem: BillItem = {
       id: `ITM-${Date.now()}`,
       description: itemDesc.trim(),
@@ -61,32 +74,123 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
     setItems(items.filter((i) => i.id !== id));
   };
 
+  const updateItem = (id: string, updates: Partial<BillItem>) => {
+    setItems((current) => current.map((item) => {
+      if (item.id !== id) return item;
+      const next = { ...item, ...updates };
+      const amount = Math.max(0, Number(next.unitCost) || 0) * Math.max(1, Number(next.quantity) || 1);
+      return { ...next, amount, totalPrice: amount };
+    }));
+  };
+
+  const loadDoctorOrders = (tokenId: string) => {
+    setSelectedTokenId(tokenId);
+    const token = patientTokens.find((item) => item.id === tokenId);
+    const orders = token?.doctorOrders;
+    if (!token || !orders) {
+      setItems([]);
+      setDiagnoses([]);
+      return;
+    }
+    const orderedItems: BillItem[] = [
+      ...(orders.consultationFee > 0 ? [{
+        id: `${token.id}-consult`,
+        description: `Consultation — ${orders.orderedByDoctorName}`,
+        category: 'Consultation' as const,
+        unitCost: orders.consultationFee,
+        quantity: 1,
+        amount: orders.consultationFee,
+        totalPrice: orders.consultationFee,
+      }] : []),
+      ...orders.labRequests.filter((order) => order.price > 0).map((order) => ({
+        id: order.id,
+        description: order.testName,
+        category: 'Lab Test' as const,
+        unitCost: order.price,
+        quantity: 1,
+        amount: order.price,
+        totalPrice: order.price,
+      })),
+      ...orders.radiologyRequests.filter((order) => order.price > 0).map((order) => ({
+        id: order.id,
+        description: order.studyName,
+        category: 'Radiology' as const,
+        unitCost: order.price,
+        quantity: 1,
+        amount: order.price,
+        totalPrice: order.price,
+      })),
+      ...orders.procedureRequests.filter((order) => order.price > 0).map((order) => ({
+        id: order.id,
+        description: order.procedureName,
+        category: 'Surgical Procedure' as const,
+        unitCost: order.price,
+        quantity: 1,
+        amount: order.price,
+        totalPrice: order.price,
+      })),
+    ];
+    setItems(orderedItems);
+    setDiagnoses(orders.diagnoses.map((diagnosis) => ({
+      code: diagnosis.code,
+      description: diagnosis.description,
+      doctorName: orders.orderedByDoctorName,
+      orderedAt: orders.orderedAt,
+    })));
+    setFormError('');
+  };
+
   const totalAmount = items.reduce((sum, item) => sum + (Number(item.amount ?? item.totalPrice) || 0), 0);
-  const balanceDue = Math.max(0, totalAmount - (Number(insuranceCovered) || 0));
+  const balanceDue = Math.max(0, totalAmount - (Number(insuranceCovered) || 0) + copayAmount);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
     const selectedPatient = patients.find((p) => p.id === patientId);
-    if (!selectedPatient) return;
+    if (!selectedPatient) {
+      setFormError('Select a patient before saving the invoice.');
+      return;
+    }
+    if (items.length === 0) {
+      setFormError('Add at least one charge before saving the invoice.');
+      return;
+    }
+    if (items.some((item) => !item.description.trim() || !Number.isFinite(item.unitCost) || item.unitCost <= 0 || !Number.isInteger(item.quantity) || item.quantity < 1)) {
+      setFormError('Each service needs a description, a positive unit price, and a whole-number quantity.');
+      return;
+    }
+    if (!Number.isFinite(Number(insuranceCovered)) || Number(insuranceCovered) < 0 || Number(insuranceCovered) > totalAmount) {
+      setFormError('Insurance adjudication must be between $0 and the invoice subtotal.');
+      return;
+    }
+    if (!Number.isFinite(copayAmount) || copayAmount < 0) {
+      setFormError('Patient copay must be a valid non-negative amount.');
+      return;
+    }
+    const submitter = (e.nativeEvent as SubmitEvent).submitter;
+    const saveDraft = submitter instanceof HTMLButtonElement && submitter.value === 'draft';
 
     createInvoice({
       patientId: selectedPatient.id,
       patientName: `${selectedPatient.firstName} ${selectedPatient.lastName}`,
+      encounterType,
+      encounterTokenId: selectedToken?.id,
+      diagnoses,
       patientPhone: selectedPatient.phone,
       patientEmail: selectedPatient.email,
       issueDate: new Date().toISOString().split('T')[0],
       dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      status: balanceDue === 0 ? 'Paid' : 'Pending',
+      status: saveDraft ? 'Draft' : Number(insuranceCovered) > 0 ? 'Pending Insurance' : balanceDue === 0 ? 'Paid' : 'Pending',
       items,
       insuranceCoveredAmount: insuranceCovered,
-      copayAmount: 25,
+      copayAmount,
       tax: 0,
     });
 
     addNotification(
-      'Invoice Generated',
-      `Invoice created for ${selectedPatient.firstName} ${selectedPatient.lastName} ($${balanceDue.toFixed(2)} due).`,
-      'success',
+      saveDraft ? 'Invoice Draft Saved' : 'Invoice Issued',
+      `${saveDraft ? 'Draft saved' : 'Invoice issued'} for ${selectedPatient.firstName} ${selectedPatient.lastName} (${encounterType}; $${balanceDue.toFixed(2)} patient balance).`,
+      saveDraft ? 'info' : 'success',
       selectedPatient.id
     );
 
@@ -131,19 +235,53 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
               1. Patient & Insurance Profile
             </span>
-            <select
-              value={patientId}
-              onChange={(e) => setPatientId(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none"
-              required
-            >
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.firstName} {p.lastName} (MRN: {p.id}) · {p.insurance?.provider || 'Self-Pay'} ({p.status})
-                </option>
-              ))}
-            </select>
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px]">
+              <PatientLookup
+                patients={patients}
+                tokens={receptionTokens}
+                selectedPatientId={patientId}
+                onSelect={(id) => {
+                  const nextPatient = patients.find((patient) => patient.id === id);
+                  setPatientId(id);
+                  setSelectedTokenId('');
+                  setDiagnoses([]);
+                  setItems([]);
+                  if (nextPatient) setEncounterType(nextPatient.status === 'Inpatient' ? 'IPD' : 'OPD');
+                }}
+              />
+              <select value={encounterType} onChange={(event) => setEncounterType(event.target.value as 'OPD' | 'IPD')} aria-label="Encounter type" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium">
+                <option value="OPD">OPD encounter</option>
+                <option value="IPD">IPD encounter</option>
+              </select>
+            </div>
+            {selectedPatient && patientTokens.length > 0 && (
+              <label className="block text-xs font-semibold text-slate-700">
+                Doctor encounter / token
+                <select value={selectedTokenId} onChange={(event) => loadDoctorOrders(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-xs font-normal">
+                  <option value="">Select visit to load doctor orders</option>
+                  {patientTokens.map((token) => (
+                    <option key={token.id} value={token.id}>{token.tokenNumber} · {token.department} · {token.createdDate || token.visitDate || 'Visit'} · {token.doctorOrders?.orderedByDoctorName}</option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
+
+          {selectedToken?.doctorOrders && (
+            <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
+              <div className="flex items-center gap-2 text-indigo-900">
+                <Stethoscope className="h-4 w-4" />
+                <h3 className="text-xs font-bold">Doctor-entered diagnoses</h3>
+                <span className="ml-auto text-[10px] text-indigo-700">{selectedToken.doctorOrders.orderedByDoctorName}</span>
+              </div>
+              {diagnoses.length ? (
+                <ul className="mt-2 space-y-1">
+                  {diagnoses.map((diagnosis, index) => <li key={`${diagnosis.code}-${index}`} className="text-[11px] text-slate-800"><span className="mr-2 rounded bg-white px-1.5 py-0.5 font-mono font-bold">{diagnosis.code}</span>{diagnosis.description}</li>)}
+                </ul>
+              ) : <p className="mt-2 text-[10px] text-slate-600">No diagnoses were recorded by the doctor for this visit.</p>}
+              <p className="mt-2 text-[10px] text-slate-500">Diagnosis entries are read-only for the cashier.</p>
+            </section>
+          )}
 
           {/* Classification Section 2: Itemized Line Charges */}
           <div className="space-y-3 p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
@@ -156,22 +294,27 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
               </span>
             </div>
 
-            <div className="space-y-1.5 max-h-36 overflow-y-auto divide-y divide-slate-100 bg-white p-2.5 rounded-lg border border-slate-200">
+            <div className="space-y-1.5 max-h-64 overflow-y-auto divide-y divide-slate-100 bg-white p-2.5 rounded-lg border border-slate-200">
+              {!items.length && <p className="py-3 text-center text-[11px] text-slate-500">Select a doctor visit to load ordered services or add a service below.</p>}
               {items.map((it) => (
-                <div key={it.id} className="pt-1.5 first:pt-0 flex items-center justify-between">
-                  <div className="min-w-0 pr-2">
-                    <span className="font-medium text-slate-800 block truncate">{it.description}</span>
-                    <span className="text-[9px] text-slate-400 uppercase font-mono">{it.category}</span>
+                <div key={it.id} className="grid grid-cols-1 gap-2 pt-2 first:pt-0 sm:grid-cols-[minmax(0,1fr)_125px_65px_100px_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <input aria-label="Service description" value={it.description} onChange={(event) => updateItem(it.id, { description: event.target.value })} className="w-full rounded border border-slate-200 px-2 py-1 text-xs font-medium text-slate-800" />
+                    <span className="text-[9px] uppercase text-slate-400">{it.category}{it.id.startsWith('ITM-') ? '' : ' · Doctor order'}</span>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="font-mono font-bold text-slate-900">
-                      ${(Number(it.totalPrice ?? it.amount) || 0).toFixed(2)}
-                    </span>
+                  <select aria-label="Service category" value={it.category} onChange={(event) => updateItem(it.id, { category: event.target.value as BillItem['category'] })} className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[10px]">
+                    {(['Consultation', 'Lab Test', 'Radiology', 'Pharmacy', 'Room & Nursing', 'Surgical Procedure', 'Cardiology'] as const).map((category) => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                  <label className="text-[9px] text-slate-500">Qty<input aria-label="Service quantity" type="number" min="1" step="1" value={it.quantity} onChange={(event) => updateItem(it.id, { quantity: Number(event.target.value) })} className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-right font-mono text-xs" /></label>
+                  <label className="text-[9px] text-slate-500">Unit price<input aria-label="Service unit price" type="number" min="0.01" step="0.01" value={it.unitCost} onChange={(event) => updateItem(it.id, { unitCost: Number(event.target.value) })} className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-right font-mono text-xs" /></label>
+                  <div className="flex items-center justify-between gap-2 sm:justify-end">
+                    <span className="font-mono font-bold text-slate-900">${(Number(it.totalPrice ?? it.amount) || 0).toFixed(2)}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveItem(it.id)}
                       className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer transition"
-                      title="Remove charge item"
+                      title="Remove service"
+                      aria-label={`Remove ${it.description}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -180,7 +323,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
               ))}
             </div>
 
-            {/* Add Item form */}
+            {/* Add service */}
             <div className="p-2 bg-white border border-slate-200 rounded-lg flex flex-wrap gap-2 items-center">
               <input
                 type="text"
@@ -191,17 +334,20 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
               />
               <select
                 value={itemCategory}
-                onChange={(e) => setItemCategory(e.target.value as any)}
+                onChange={(e) => setItemCategory(e.target.value as BillItem['category'])}
                 className="bg-slate-50 border border-slate-200 rounded p-1.5 text-xs outline-none"
               >
                 <option value="Consultation">Consult</option>
-                <option value="Lab">Lab</option>
-                <option value="Ward">Ward</option>
+                <option value="Lab Test">Lab test</option>
+                <option value="Radiology">Radiology</option>
                 <option value="Pharmacy">Pharmacy</option>
-                <option value="Procedure">Procedure</option>
+                <option value="Room & Nursing">Room &amp; nursing</option>
+                <option value="Surgical Procedure">Surgical procedure</option>
+                <option value="Cardiology">Cardiology</option>
               </select>
               <input
                 type="number"
+                min="0.01"
                 placeholder="Price"
                 value={itemPrice}
                 onChange={(e) => setItemPrice(Number(e.target.value))}
@@ -232,6 +378,10 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
                 className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono font-medium focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
+            <label className="text-[10px] font-semibold text-slate-600">
+              Patient copay ($)
+              <input type="number" min="0" step="0.01" value={copayAmount} onChange={(event) => setCopayAmount(Math.max(0, Number(event.target.value) || 0))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 font-mono text-xs" />
+            </label>
             <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3 text-right">
               <span className="text-[10px] text-blue-700 uppercase font-semibold block tracking-wider">
                 Patient Balance Due
@@ -243,6 +393,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
           </div>
 
           {/* Footer Controls */}
+          {formError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-800">{formError}</p>}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
             <button
               type="button"
@@ -251,17 +402,16 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Issue Hospital Invoice</span>
-            </button>
+            <div className="flex gap-2">
+              <button type="submit" name="invoiceAction" value="draft" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Save draft</button>
+              <button type="submit" name="invoiceAction" value="issue" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Issue invoice</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>
     </div>
   );
 };
-
