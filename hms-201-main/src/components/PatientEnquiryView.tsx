@@ -49,13 +49,22 @@ export const PatientEnquiryView: React.FC = () => {
   const patientInvoices = invoices.filter((i) => i.patientId === selectedPatient?.id);
   const patientTokens = receptionTokens.filter((token) => token.patientId === selectedPatient?.id);
   const latestToken = patientTokens[0] || null;
-  const visitEntries = (selectedPatient?.facilityVisits || []).map((visit) => ({
-    date: visit.visitDate,
-    title: visit.visitType,
-    detail: visit.chiefComplaint,
-    meta: `${visit.doctorName} • ${visit.department}`,
-    kind: 'Visit' as const,
-  }));
+  const visitEntries = [
+    ...(selectedPatient?.facilityVisits || []).map((visit) => ({
+      date: visit.visitDate,
+      title: visit.visitType,
+      detail: visit.chiefComplaint,
+      meta: `${visit.doctorName} • ${visit.department}`,
+      kind: 'Visit' as const,
+    })),
+    ...patientTokens.map((token) => ({
+      date: token.visitDate || token.createdDate || '',
+      title: `Token ${token.tokenNumber} · ${token.registrationSource || 'Visit'} · ${token.status}`,
+      detail: token.visitPurpose || token.visitComplaint || token.patientVisitSummary || 'Patient encounter',
+      meta: `${token.doctorName || 'Clinician not assigned'} • ${token.department} • ${token.createdTime}`,
+      kind: 'Visit' as const,
+    })),
+  ].sort((first, second) => second.date.localeCompare(first.date));
 
   const appointmentEntries = patientAppointments.map((apt) => ({
     date: apt.date,

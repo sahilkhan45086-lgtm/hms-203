@@ -109,6 +109,8 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
     advanceTokenWorkflow,
     currentUser,
     patients,
+    receptionTokens,
+    addNotification,
   } = useHospital();
 
   const [activeTab, setActiveTab] = useState<TokenWorkflowStage>('1_REGISTRATION');
@@ -129,27 +131,20 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   const [healthSummary, setHealthSummary] = useState<string>('');
   const [chiefComplaint, setChiefComplaint] = useState<string>('');
   const [clinicalAssessment, setClinicalAssessment] = useState<string>('');
-  const [diagnoses, setDiagnoses] = useState<Array<{ code: string; description: string }>>([
-    { code: 'I10', description: 'Essential (primary) hypertension' },
-  ]);
-  const [selectedDiagnosisCode, setSelectedDiagnosisCode] = useState('I10');
+  const [diagnoses, setDiagnoses] = useState<Array<{ code: string; description: string }>>([]);
+  const [selectedDiagnosisCode, setSelectedDiagnosisCode] = useState('');
+  const [doctorFormError, setDoctorFormError] = useState('');
   const [consultationFee, setConsultationFee] = useState<number>(200);
 
   // Diagnostic Orders in EMR
-  const [labOrders, setLabOrders] = useState<TokenDoctorOrder['labRequests']>([
-    { id: 'L-1', testName: 'Complete Blood Count (CBC with Diff)', category: 'Hematology', price: 45, status: 'Ordered' },
-    { id: 'L-2', testName: 'Comprehensive Metabolic Panel (CMP)', category: 'Biochemistry', price: 65, status: 'Ordered' },
-  ]);
-  const [radiologyOrders, setRadiologyOrders] = useState<TokenDoctorOrder['radiologyRequests']>([
-    { id: 'R-1', studyName: 'Chest X-Ray PA & Lateral View', modality: 'Digital Radiography', price: 120, status: 'Ordered' },
-  ]);
-  const [procedureOrders, setProcedureOrders] = useState<TokenDoctorOrder['procedureRequests']>([
-    { id: 'P-1', cptCode: 'CPT 99214', procedureName: 'Office Outpatient Visit Level 4', price: 200, status: 'Completed' },
-    { id: 'P-2', cptCode: 'CPT 93000', procedureName: '12-Lead Electrocardiogram (ECG)', price: 95, status: 'Scheduled' },
-  ]);
+  const [labOrders, setLabOrders] = useState<TokenDoctorOrder['labRequests']>([]);
+  const [radiologyOrders, setRadiologyOrders] = useState<TokenDoctorOrder['radiologyRequests']>([]);
+  const [procedureOrders, setProcedureOrders] = useState<TokenDoctorOrder['procedureRequests']>([]);
 
   // Step 4: Cashier Form State
   const [paymentMethod, setPaymentMethod] = useState<TokenBillingSummary['paymentMethod']>('Credit/Debit Card');
+  const [insuranceAuthorizationStatus, setInsuranceAuthorizationStatus] = useState<NonNullable<TokenBillingSummary['insuranceAuthorizationStatus']>>('Not Required');
+  const [applyDailyInsuranceLimit, setApplyDailyInsuranceLimit] = useState(false);
 
   // Step 5: Diagnostics Execution State
   const [diagnosticType, setDiagnosticType] = useState<'Laboratory' | 'Radiology'>('Laboratory');
@@ -162,6 +157,12 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   useEffect(() => {
     if (token) {
       setActiveTab(initialStage || token.currentStage || '1_REGISTRATION');
+      setInsuranceAuthorizationStatus(
+        token.billingSummary?.insuranceAuthorizationStatus ||
+        (token.paymentScheme?.preAuthStatus === 'Pending' ? 'Required' : token.paymentScheme?.preAuthStatus) ||
+        (token.patientDetails?.insurancePreAuthorizationRequired ? 'Required' : 'Not Required')
+      );
+      setApplyDailyInsuranceLimit(token.billingSummary?.dailyInsuranceLimitApplied || false);
       if (token.vitals) {
         setBpSystolic(token.vitals.bpSystolic);
         setBpDiastolic(token.vitals.bpDiastolic);
@@ -180,10 +181,21 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
         setClinicalAssessment(token.doctorOrders.clinicalAssessment || '');
         setDiagnoses(token.doctorOrders.diagnoses || []);
         setConsultationFee(token.doctorOrders.consultationFee || 200);
-        if (token.doctorOrders.labRequests?.length) setLabOrders(token.doctorOrders.labRequests);
-        if (token.doctorOrders.radiologyRequests?.length) setRadiologyOrders(token.doctorOrders.radiologyRequests);
-        if (token.doctorOrders.procedureRequests?.length) setProcedureOrders(token.doctorOrders.procedureRequests);
+        setLabOrders(token.doctorOrders.labRequests || []);
+        setRadiologyOrders(token.doctorOrders.radiologyRequests || []);
+        setProcedureOrders(token.doctorOrders.procedureRequests || []);
+      } else {
+        setHealthSummary('');
+        setChiefComplaint('');
+        setClinicalAssessment('');
+        setDiagnoses([]);
+        setSelectedDiagnosisCode('');
+        setConsultationFee(200);
+        setLabOrders([]);
+        setRadiologyOrders([]);
+        setProcedureOrders([]);
       }
+      setDoctorFormError('');
     }
   }, [token?.id, isOpen, initialStage]);
 
@@ -199,6 +211,19 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   const subtotal = currentConsult + currentLabsTotal + currentRadTotal + currentProcTotal;
 
   const scheme = token.paymentScheme || { schemeType: 'Self-Pay' as PaymentSchemeType };
+  const dailyInsuranceLimitAed = token.patientDetails?.insuranceDailyClinicLimitAed;
+  const visitDate = token.visitDate || token.createdDate;
+  const usedInsuranceTodayAed = receptionTokens
+    .filter((visitToken) =>
+      visitToken.id !== token.id &&
+      visitToken.patientId === token.patientId &&
+      (visitToken.visitDate || visitToken.createdDate) === visitDate &&
+      visitToken.billingSummary?.schemeType === 'Insurance'
+    )
+    .reduce((total, visitToken) => total + (visitToken.billingSummary?.insuranceCoveredAmount || 0), 0);
+  const dailyLimitRemainingAed = dailyInsuranceLimitAed === undefined
+    ? undefined
+    : Math.max(0, dailyInsuranceLimitAed - usedInsuranceTodayAed);
   let insuranceCovered = 0;
   let discountAmount = 0;
   let patientPortion = subtotal;
@@ -216,6 +241,10 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
     discountAmount = Math.round(subtotal * (disc / 100));
     patientPortion = Math.max(0, subtotal - discountAmount);
   }
+  const projectedInsuranceTodayAed = usedInsuranceTodayAed + insuranceCovered;
+  const dailyInsuranceLimitExceeded = applyDailyInsuranceLimit &&
+    dailyInsuranceLimitAed !== undefined &&
+    projectedInsuranceTodayAed > dailyInsuranceLimitAed;
 
   // Handle Step 2 Submission (Nursing Vitals)
   const handleSaveVitals = (e: React.FormEvent) => {
@@ -241,10 +270,15 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   // Handle Step 3 Submission (Doctor EMR)
   const handleSaveDoctorOrders = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!healthSummary.trim() || !clinicalAssessment.trim() || diagnoses.length === 0) {
+      setDoctorFormError('Enter the patient health summary, clinical assessment, and at least one diagnosis before saving.');
+      return;
+    }
+    setDoctorFormError('');
     const doctorOrder: TokenDoctorOrder = {
-      healthSummary: healthSummary || 'Clinical examination and diagnostic workup initiated.',
-      chiefComplaint: chiefComplaint || 'Consultation encounter',
-      clinicalAssessment: clinicalAssessment || 'Clinical evaluation performed. Diagnostic requests authorized.',
+      healthSummary: healthSummary.trim(),
+      chiefComplaint: chiefComplaint.trim(),
+      clinicalAssessment: clinicalAssessment.trim(),
       diagnoses,
       labRequests: labOrders,
       radiologyRequests: radiologyOrders,
@@ -260,6 +294,15 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
 
   // Handle Step 4 Submission (Cashier Billing)
   const handleSettleCashier = () => {
+    if (dailyInsuranceLimitExceeded) {
+      addNotification(
+        'Daily Insurance Limit Exceeded',
+        `This invoice would bring the patient’s insurer-covered total to AED ${projectedInsuranceTodayAed.toFixed(2)}, above the daily limit of AED ${dailyInsuranceLimitAed?.toFixed(2)}. Adjust the invoice or disable the optional limit only when appropriate.`,
+        'warning',
+        token.patientId
+      );
+      return;
+    }
     const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     const billingSummary: TokenBillingSummary = {
       invoiceNumber: `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -275,6 +318,11 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
       receiptNumber: `RCP-${Math.floor(10000 + Math.random() * 90000)}`,
       cashierName: currentUser?.name || 'Cashier Desk Terminal',
       billedAt: now,
+      insuranceAuthorizationStatus: scheme.schemeType === 'Insurance' ? insuranceAuthorizationStatus : undefined,
+      dailyInsuranceLimitApplied: scheme.schemeType === 'Insurance' ? applyDailyInsuranceLimit : undefined,
+      dailyInsuranceLimitAed: scheme.schemeType === 'Insurance' && applyDailyInsuranceLimit ? dailyInsuranceLimitAed : undefined,
+      dailyInsuranceUsedBeforeAed: scheme.schemeType === 'Insurance' && applyDailyInsuranceLimit ? usedInsuranceTodayAed : undefined,
+      dailyInsuranceUsedAfterAed: scheme.schemeType === 'Insurance' && applyDailyInsuranceLimit ? projectedInsuranceTodayAed : undefined,
     };
     settleTokenBilling(token.id, billingSummary);
     const hasDiagnostics =
@@ -392,6 +440,68 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
 
         {/* Modal Main Body (Stage specific content) */}
         <div className="flex-1 p-6 overflow-y-auto bg-white">
+          <section className="mb-6 rounded-xl border border-blue-200 bg-blue-50/60 p-4" aria-label="Shared patient and visit details">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Shared Patient & Visit Record</h3>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Token {token.tokenNumber} · {token.registrationSource || 'Registration'} · {token.status}
+                  {token.bookingChannel ? ` · ${token.bookingChannel}` : ''}
+                </p>
+              </div>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-blue-800">
+                {token.currentStage || '1_REGISTRATION'}
+              </span>
+            </div>
+            <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Patient / MRN</dt><dd className="mt-0.5 font-medium text-slate-900">{[token.patientDetails?.title, token.patientName].filter(Boolean).join(' ')} · {token.patientId}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Registration no.</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.registrationNumber || token.patientId}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Phone</dt><dd className="mt-0.5 text-slate-800">{token.patientPhone || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Age / Gender / Date of birth</dt><dd className="mt-0.5 text-slate-800">{token.patientAge ?? 'Not recorded'} · {token.patientGender || 'Not recorded'} · {token.patientDetails?.dateOfBirth || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Blood group / Nationality / Marital status</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.bloodGroup || 'Not recorded'} · {token.patientDetails?.nationality || 'Not recorded'} · {token.patientDetails?.maritalStatus || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">National ID / Passport</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.nationalId || 'Not recorded'} / {token.patientDetails?.passportNumber || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Email</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.email || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Address</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.address || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Department / clinician</dt><dd className="mt-0.5 text-slate-800">{token.department} · {token.doctorName || 'Not assigned'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Visit reason</dt><dd className="mt-0.5 text-slate-800">{token.visitPurpose || token.visitComplaint || 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Insurance / payment</dt><dd className="mt-0.5 text-slate-800">{token.insuranceProvider || 'Not recorded'} · {token.payMode || token.paymentScheme?.schemeType || 'Not recorded'}</dd></div>
+              {token.patientDetails?.insuranceProvider && (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <dt className="text-[10px] font-semibold uppercase text-slate-500">UAE insurance verification details</dt>
+                  <dd className="mt-0.5 text-slate-800">
+                    Payer: {token.patientDetails.insuranceProvider}
+                    {token.patientDetails.insuranceTpa ? ` · TPA: ${token.patientDetails.insuranceTpa}` : ''}
+                    {token.patientDetails.insuranceRegulator ? ` · ${token.patientDetails.insuranceRegulator}` : ''}
+                    {token.patientDetails.insuranceNetwork ? ` · Network: ${token.patientDetails.insuranceNetwork}` : ''}
+                    {token.patientDetails.insurancePlanName ? ` · Plan: ${token.patientDetails.insurancePlanName}` : ''}
+                    {token.patientDetails.insuranceCardNumber ? ` · Card: ${token.patientDetails.insuranceCardNumber}` : ''}
+                    {token.patientDetails.insurancePolicyNumber ? ` · Policy: ${token.patientDetails.insurancePolicyNumber}` : ''}
+                    {token.patientDetails.insuranceMemberId ? ` · Member: ${token.patientDetails.insuranceMemberId}` : ''}
+                    {token.patientDetails.insuranceStatus ? ` · Status: ${token.patientDetails.insuranceStatus}` : ''}
+                    {token.patientDetails.insuranceVerificationReference ? ` · Verification ref: ${token.patientDetails.insuranceVerificationReference}` : ''}
+                    {token.patientDetails.insuranceDailyClinicLimitAed !== undefined ? ` · Daily clinic limit: AED ${token.patientDetails.insuranceDailyClinicLimitAed.toFixed(2)}` : ''}
+                    {token.patientDetails.insurancePreAuthorizationRequired ? ' · Pre-authorization required by policy' : ''}
+                  </dd>
+                </div>
+              )}
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Allergies</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.allergies?.map((allergy) => `${allergy.allergen} (${allergy.severity})`).join(', ') || 'None recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Chronic conditions</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.chronicConditions?.join(', ') || 'None recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Emergency contact</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.emergencyContact ? `${token.patientDetails.emergencyContact.name} · ${token.patientDetails.emergencyContact.relationship} · ${token.patientDetails.emergencyContact.phone}` : 'Not recorded'}</dd></div>
+              <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Registration consent</dt><dd className="mt-0.5 text-slate-800">{token.patientDetails?.consentSigned ? `Signed by ${token.patientDetails.consentSignature || 'patient'} (${token.patientDetails.consentSignerRole || 'Patient'}) · ${token.patientDetails.consentTimestamp || 'time not recorded'}` : 'Not recorded'}</dd></div>
+              {token.appointmentId && <div><dt className="text-[10px] font-semibold uppercase text-slate-500">Appointment</dt><dd className="mt-0.5 text-slate-800">{token.appointmentId}</dd></div>}
+            </dl>
+            {token.patientDetails?.insuranceCards?.length ? (
+              <div className="mt-3 border-t border-blue-200 pt-3 text-xs">
+                <h4 className="text-[10px] font-semibold uppercase text-slate-500">Insurance cards</h4>
+                <ul className="mt-1 space-y-1 text-slate-800">
+                  {token.patientDetails.insuranceCards.map((card) => (
+                    <li key={card.id}>{card.payerName} · {card.plan} · Card {card.cardNumber} · Expires {card.expiryDate}{card.isPrimary ? ' · Primary' : ''}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+
           {/* STAGE 1: REGISTRATION */}
           {activeTab === '1_REGISTRATION' && (
             <div className="space-y-6">
@@ -425,7 +535,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Phone Contact:</span>
-                      <span className="text-slate-900">{token.patientPhone || '+1 (555) 019-2834'}</span>
+                      <span className="text-slate-900">{token.patientPhone || 'Not recorded'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Assigned Department:</span>
@@ -467,7 +577,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">Copay Payable:</span>
-                        <span className="font-semibold text-slate-900">${scheme.copayAmount || 25}</span>
+                        <span className="font-semibold text-slate-900">AED {scheme.copayAmount || 25}</span>
                       </div>
                     </div>
                   )}
@@ -802,6 +912,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       onChange={(e) => {
                         const code = e.target.value;
                         setSelectedDiagnosisCode(code);
+                        if (!code) return;
                         const library: Record<string, string> = {
                           'I10': 'Essential (primary) hypertension',
                           'I20.9': 'Angina pectoris, unspecified',
@@ -817,6 +928,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       }}
                       className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-md text-slate-800"
                     >
+                      <option value="">Select diagnosis</option>
                       <option value="I10">ICD-10 I10 (Hypertension)</option>
                       <option value="I20.9">ICD-10 I20.9 (Angina Pectoris)</option>
                       <option value="E11.9">ICD-10 E11.9 (Type 2 Diabetes)</option>
@@ -827,6 +939,8 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                     </select>
                   </div>
                 </div>
+
+                {doctorFormError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800">{doctorFormError}</p>}
 
                 <div className="flex flex-wrap gap-2">
                   {diagnoses.map((d, idx) => (
@@ -874,7 +988,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       <div key={l.id} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between text-xs">
                         <div className="truncate pr-2">
                           <p className="font-medium text-slate-800 truncate">{l.testName}</p>
-                          <p className="text-[10px] text-slate-500">${l.price} • {l.category}</p>
+                          <p className="text-[10px] text-slate-500">AED {l.price} • {l.category}</p>
                         </div>
                         <button
                           type="button"
@@ -913,7 +1027,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       <div key={r.id} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between text-xs">
                         <div className="truncate pr-2">
                           <p className="font-medium text-slate-800 truncate">{r.studyName}</p>
-                          <p className="text-[10px] text-slate-500">${r.price} • {r.modality}</p>
+                          <p className="text-[10px] text-slate-500">AED {r.price} • {r.modality}</p>
                         </div>
                         <button
                           type="button"
@@ -954,7 +1068,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                           <p className="font-medium text-slate-800 truncate">
                             <span className="font-mono text-purple-700 font-bold">{p.cptCode}</span> {p.procedureName}
                           </p>
-                          <p className="text-[10px] text-slate-500">${p.price}</p>
+                          <p className="text-[10px] text-slate-500">AED {p.price}</p>
                         </div>
                         <button
                           type="button"
@@ -1005,6 +1119,74 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                 )}
               </div>
 
+              {scheme.schemeType === 'Insurance' && (
+                <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                  <div>
+                    <h5 className="text-xs font-bold text-amber-950">Insurance authorization & daily patient limit</h5>
+                    <p className="mt-1 text-[10px] text-amber-900">
+                      Daily cap applies to this patient’s cumulative insurer-covered charges for {visitDate || 'this visit date'}. Cashier may choose whether to enforce the configured cap.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-[10px] font-semibold text-slate-700">
+                      Authorization status for this visit
+                      <select
+                        value={insuranceAuthorizationStatus}
+                        onChange={(event) => {
+                          const status = event.target.value;
+                          if (status === 'Required' || status === 'Approved' || status === 'Not Required') {
+                            setInsuranceAuthorizationStatus(status);
+                            if (status === 'Required') setApplyDailyInsuranceLimit(false);
+                          }
+                        }}
+                        className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      >
+                        <option value="Required">Approval required / pending</option>
+                        <option value="Approved">Approval obtained</option>
+                        <option value="Not Required">Approval not required</option>
+                      </select>
+                    </label>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-[11px]">
+                      <span className="block text-[10px] font-semibold uppercase text-slate-500">Configured daily clinic limit</span>
+                      <strong className="mt-1 block text-sm text-slate-900">
+                        {dailyInsuranceLimitAed === undefined ? 'No limit configured' : `AED ${dailyInsuranceLimitAed.toFixed(2)}`}
+                      </strong>
+                      {dailyLimitRemainingAed !== undefined && (
+                        <span className="mt-1 block text-slate-600">
+                          Used today: AED {usedInsuranceTodayAed.toFixed(2)} · Remaining: AED {dailyLimitRemainingAed.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {dailyInsuranceLimitAed !== undefined && dailyInsuranceLimitAed > 0 && (
+                    <label className={`flex items-start gap-2 rounded-lg border bg-white p-3 text-[11px] ${insuranceAuthorizationStatus === 'Required' ? 'border-slate-200 text-slate-400' : 'border-amber-200 text-slate-800'}`}>
+                      <input
+                        type="checkbox"
+                        checked={applyDailyInsuranceLimit}
+                        disabled={insuranceAuthorizationStatus === 'Required'}
+                        onChange={(event) => setApplyDailyInsuranceLimit(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-700"
+                      />
+                      <span>
+                        <strong>Enforce the daily insurance limit for this invoice</strong>
+                        <span className="mt-0.5 block text-[10px] font-normal">
+                          {insuranceAuthorizationStatus === 'Required'
+                            ? 'Unavailable while approval is required or pending. Select Approved or Not Required only after confirming with the payer.'
+                            : 'When selected, settlement is blocked if this visit would exceed the patient’s remaining daily insurer-covered limit.'}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                  {applyDailyInsuranceLimit && dailyInsuranceLimitAed !== undefined && (
+                    <div className={`rounded-lg p-3 text-[11px] font-semibold ${dailyInsuranceLimitExceeded ? 'border border-rose-300 bg-rose-50 text-rose-800' : 'border border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                      {dailyInsuranceLimitExceeded
+                        ? `Limit exceeded: today’s insurer-covered total would be AED ${projectedInsuranceTodayAed.toFixed(2)} against AED ${dailyInsuranceLimitAed.toFixed(2)}. Reduce billable services before settlement.`
+                        : `Within limit: today’s insurer-covered total will be AED ${projectedInsuranceTodayAed.toFixed(2)} of AED ${dailyInsuranceLimitAed.toFixed(2)}.`}
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* Itemized Services Breakdown */}
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex justify-between text-xs font-bold text-slate-600 uppercase tracking-wider">
@@ -1017,7 +1199,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                       <p className="font-medium text-slate-800">Physician Consultation</p>
                       <p className="text-xs text-slate-500">{token.doctorName || 'Attending Physician'}</p>
                     </div>
-                    <span className="font-semibold text-slate-900">${currentConsult.toFixed(2)}</span>
+                    <span className="font-semibold text-slate-900">AED {currentConsult.toFixed(2)}</span>
                   </div>
 
                   {(token.doctorOrders?.labRequests || labOrders).map((l, i) => (
@@ -1026,7 +1208,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                         <p className="font-medium text-slate-800">{l.testName}</p>
                         <p className="text-xs text-slate-500">Diagnostic Laboratory ({l.category})</p>
                       </div>
-                      <span className="font-semibold text-slate-900">${l.price.toFixed(2)}</span>
+                      <span className="font-semibold text-slate-900">AED {l.price.toFixed(2)}</span>
                     </div>
                   ))}
 
@@ -1036,7 +1218,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                         <p className="font-medium text-slate-800">{r.studyName}</p>
                         <p className="text-xs text-slate-500">Radiology & Imaging ({r.modality})</p>
                       </div>
-                      <span className="font-semibold text-slate-900">${r.price.toFixed(2)}</span>
+                      <span className="font-semibold text-slate-900">AED {r.price.toFixed(2)}</span>
                     </div>
                   ))}
 
@@ -1046,7 +1228,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                         <p className="font-medium text-slate-800">{p.procedureName}</p>
                         <p className="text-xs text-purple-700 font-mono font-bold">{p.cptCode}</p>
                       </div>
-                      <span className="font-semibold text-slate-900">${p.price.toFixed(2)}</span>
+                      <span className="font-semibold text-slate-900">AED {p.price.toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -1055,26 +1237,26 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                 <div className="bg-slate-50/80 p-4 border-t border-slate-200 space-y-2">
                   <div className="flex justify-between text-sm text-slate-600">
                     <span>Gross Services Subtotal:</span>
-                    <span className="font-semibold text-slate-800">${subtotal.toFixed(2)}</span>
+                    <span className="font-semibold text-slate-800">AED {subtotal.toFixed(2)}</span>
                   </div>
 
                   {scheme.schemeType === 'Insurance' && (
                     <div className="flex justify-between text-sm text-emerald-700 font-medium">
                       <span>Insurance Approved Share ({scheme.insuranceProvider}):</span>
-                      <span>-${insuranceCovered.toFixed(2)}</span>
+                      <span>-AED {insuranceCovered.toFixed(2)}</span>
                     </div>
                   )}
 
                   {scheme.schemeType === 'Discount Card' && (
                     <div className="flex justify-between text-sm text-emerald-700 font-medium">
                       <span>Discount Card Benefit ({scheme.discountCardName}):</span>
-                      <span>-${discountAmount.toFixed(2)}</span>
+                      <span>-AED {discountAmount.toFixed(2)}</span>
                     </div>
                   )}
 
                   <div className="flex justify-between text-base font-bold text-slate-900 pt-2 border-t border-slate-200">
                     <span>Net Patient Responsibility:</span>
-                    <span className="text-teal-700 text-lg">${patientPortion.toFixed(2)}</span>
+                    <span className="text-teal-700 text-lg">AED {patientPortion.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -1101,9 +1283,10 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
 
                 <button
                   onClick={handleSettleCashier}
-                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg flex items-center justify-center gap-2 shadow-xs transition-colors"
+                  disabled={dailyInsuranceLimitExceeded}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg flex items-center justify-center gap-2 shadow-xs transition-colors disabled:cursor-not-allowed disabled:bg-slate-400"
                 >
-                  <Receipt className="w-4 h-4" /> Collect ${patientPortion.toFixed(2)} & Settle Token
+                  <Receipt className="w-4 h-4" /> Collect AED {patientPortion.toFixed(2)} & Settle Token
                 </button>
               </div>
             </div>

@@ -21,15 +21,34 @@ import {
   Volume2,
   AlertTriangle,
   HeartPulse,
+  FileText,
+  FileCheck2,
+  BarChart3,
+  ShieldCheck,
+  UserPlus,
+  UserCheck,
+  Scan,
+  CalendarClock,
+  FlaskConical,
 } from 'lucide-react';
-import { useHospital } from '../context/HospitalContext';
-import { Appointment } from '../types';
+import { NavigationTab, useHospital } from '../context/HospitalContext';
+import { Appointment, UserRole } from '../types';
 
 interface DashboardOverviewProps {
   onOpenNewPatient: () => void;
   onOpenNewAppointment: (preset?: { doctorId?: string; date?: string; timeSlot?: string }) => void;
   onOpenNewInvoice: () => void;
   onSelectPatient: (id: string) => void;
+}
+
+interface WorkspaceModule {
+  id: NavigationTab;
+  label: string;
+  description: string;
+  category: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles: UserRole[];
+  badge?: string | number;
 }
 
 export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
@@ -57,6 +76,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [queueViewMode, setQueueViewMode] = useState<'grouped' | 'table'>('grouped');
   const [calledPatientId, setCalledPatientId] = useState<string | null>(null);
+  const [workspaceSearch, setWorkspaceSearch] = useState('');
+  const [expandedWorkspaceGroups, setExpandedWorkspaceGroups] = useState<string[]>(['Patient Care']);
 
   // Determine if Outpatient or Receptionist context
   const isOutpatientOrReception = currentRole === 'receptionist' || departmentPortal === 'outpatient';
@@ -87,6 +108,49 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   // 5. Pharmacy (only for clinical/admin, not receptionist)
   const lowStockMeds = pharmacy.filter((p) => p.stockQuantity <= p.minThreshold).length;
+
+  const workspaceModules: WorkspaceModule[] = [
+    { id: 'registration', label: 'Patient Registration', description: 'Register patients, create visit tokens, and manage intake.', category: 'Patient Care', icon: UserPlus, roles: ['admin', 'nurse', 'receptionist'] },
+    { id: 'patients', label: 'Doctor EMR', description: 'Open assigned patients, document diagnoses, summaries, services, and reports.', category: 'Patient Care', icon: FileText, roles: ['doctor'] },
+    { id: 'triage', label: 'Nurse & Visit EMR', description: 'Open registered tokens, record vitals, and review visit history.', category: 'Patient Care', icon: HeartPulse, roles: ['admin', 'nurse', 'doctor'] },
+    { id: 'inpatient', label: 'Inpatient Patients', description: 'Review current inpatient encounters and admissions.', category: 'Patient Care', icon: BedDouble, roles: ['admin', 'doctor', 'nurse'], badge: inpatientCount },
+    { id: 'outpatient', label: 'Outpatient Patients', description: 'Review outpatient visits and clinic encounters.', category: 'Patient Care', icon: UserCheck, roles: ['admin', 'doctor', 'nurse'], badge: outpatientCount },
+    { id: 'enquiry', label: 'Patient Enquiry', description: 'Find a patient and access permitted patient details.', category: 'Patient Care', icon: Search, roles: ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology'] },
+    { id: 'appointments', label: 'Appointments & Queue', description: 'Schedule visits, check patients in, and manage the queue.', category: 'Visits & Scheduling', icon: Calendar, roles: ['admin', 'receptionist', 'doctor'], badge: appointments.length },
+    { id: 'doctor-rota', label: 'Doctor Duty Roster', description: 'View doctor availability and duty schedules.', category: 'Visits & Scheduling', icon: CalendarClock, roles: ['admin', 'doctor'] },
+    { id: 'labs', label: 'Lab & Diagnostics', description: 'Manage laboratory, radiology, and diagnostic reports.', category: 'Clinical Services', icon: FlaskConical, roles: ['admin', 'doctor', 'nurse', 'lab'] },
+    { id: 'radiology', label: 'Radiology', description: 'Review and manage radiology work and reports.', category: 'Clinical Services', icon: Scan, roles: ['admin', 'doctor', 'nurse', 'radiology'] },
+    { id: 'pharmacy', label: 'Pharmacy Stock', description: 'Manage medication inventory and low-stock items.', category: 'Clinical Services', icon: Pill, roles: ['admin', 'pharmacist'], badge: lowStockMeds ? `${lowStockMeds} low` : undefined },
+    { id: 'coder', label: 'Medical Coder Desk', description: 'Review diagnoses, insurance approvals, and coding records.', category: 'Clinical Services', icon: FileCheck2, roles: ['admin', 'medical-coder'] },
+    { id: 'billing', label: 'Billing & Claims', description: 'Create invoices, collect payments, manage advances, refunds, and claims.', category: 'Revenue & Facilities', icon: CreditCard, roles: ['admin', 'receptionist', 'pharmacist'], badge: pendingInvoices.length ? `${pendingInvoices.length} due` : undefined },
+    { id: 'pricelist', label: 'Price List & Tariffs', description: 'Review hospital charges and service prices.', category: 'Revenue & Facilities', icon: Building2, roles: ['admin', 'doctor', 'receptionist'] },
+    { id: 'wards', label: 'Ward & Beds', description: 'Manage ward occupancy, beds, and inpatient placement.', category: 'Revenue & Facilities', icon: BedDouble, roles: ['admin', 'doctor', 'nurse'] },
+    { id: 'reports', label: 'Reports & Analytics', description: 'Review financial, operational, and clinical reports.', category: 'Administration', icon: BarChart3, roles: ['admin', 'receptionist'] },
+    { id: 'staff', label: 'Doctors & Staff', description: 'View and manage hospital staff and clinical teams.', category: 'Administration', icon: Stethoscope, roles: ['admin', 'doctor'] },
+    { id: 'admin', label: 'Administration & Compliance', description: 'Manage system settings, audit records, and compliance.', category: 'Administration', icon: ShieldCheck, roles: ['admin'] },
+  ];
+
+  const visibleWorkspaceModules = workspaceModules.filter((module) => {
+    if (!module.roles.includes(currentRole)) return false;
+    if (currentRole === 'doctor' && !['patients', 'appointments', 'doctor-rota', 'labs', 'pricelist'].includes(module.id)) return false;
+    if (departmentPortal === 'outpatient' && (module.id === 'inpatient' || module.id === 'wards')) return false;
+    if (departmentPortal === 'inpatient' && module.id === 'outpatient') return false;
+    return true;
+  });
+  const normalizedWorkspaceSearch = workspaceSearch.trim().toLowerCase();
+  const filteredWorkspaceModules = visibleWorkspaceModules.filter((module) =>
+    !normalizedWorkspaceSearch ||
+    `${module.label} ${module.description} ${module.category}`.toLowerCase().includes(normalizedWorkspaceSearch)
+  );
+  const workspaceGroups = [...new Set(filteredWorkspaceModules.map((module) => module.category))];
+
+  const toggleWorkspaceGroup = (category: string) => {
+    setExpandedWorkspaceGroups((current) =>
+      current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category]
+    );
+  };
 
   // Departments List extracted from Appointments
   const departmentList = useMemo(() => {
@@ -203,6 +267,103 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </button>
         </div>
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden" aria-labelledby="workspace-heading">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 id="workspace-heading" className="text-sm font-bold text-slate-900">Application Workspace</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Find a feature by workflow and open it without leaving this dashboard.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className="relative">
+              <span className="sr-only">Search workspace features</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={workspaceSearch}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setWorkspaceSearch(value);
+                  const query = value.trim().toLowerCase();
+                  if (query) {
+                    setExpandedWorkspaceGroups([
+                      ...new Set(
+                        visibleWorkspaceModules
+                          .filter((module) => `${module.label} ${module.description} ${module.category}`.toLowerCase().includes(query))
+                          .map((module) => module.category)
+                      ),
+                    ]);
+                  }
+                }}
+                placeholder="Search features..."
+                className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-xs outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:w-52"
+              />
+            </label>
+            {currentRole !== 'doctor' && (
+              <button
+                onClick={onOpenNewInvoice}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
+              >
+                Create invoice
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="divide-y divide-slate-100">
+          {workspaceGroups.length === 0 ? (
+            <p className="p-5 text-center text-xs text-slate-500">No available features match your search.</p>
+          ) : workspaceGroups.map((category) => {
+            const groupModules = filteredWorkspaceModules.filter((module) => module.category === category);
+            const isExpanded = expandedWorkspaceGroups.includes(category);
+            return (
+              <div key={category}>
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => toggleWorkspaceGroup(category)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-slate-50"
+                >
+                  <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    <Layers className="h-3.5 w-3.5 text-blue-500" />
+                    {category}
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">{groupModules.length}</span>
+                  </span>
+                  <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                </button>
+                {isExpanded && (
+                  <div className="grid gap-2 px-3 pb-3 md:grid-cols-2 xl:grid-cols-3">
+                    {groupModules.map((module) => {
+                      const Icon = module.icon;
+                      return (
+                        <button
+                          key={module.id}
+                          type="button"
+                          onClick={() => setActiveTab(module.id)}
+                          className="group flex min-h-16 items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        >
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 group-hover:bg-blue-100 group-hover:text-blue-700">
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <span className="truncate">{module.label}</span>
+                              {module.badge !== undefined && (
+                                <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{module.badge}</span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{module.description}</span>
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 group-hover:text-blue-600" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* METRIC RIBBON */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

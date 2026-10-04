@@ -242,7 +242,7 @@ interface HospitalContextType {
   setRegistrationMode: (mode: RegistrationMode) => void;
   setSelectedPatientId: (id: string | null) => void;
   // Patient Actions
-  addPatient: (patientData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt' | 'vitals' | 'medications' | 'labResults' | 'clinicalNotes'>) => Patient;
+  addPatient: (patientData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt' | 'vitals' | 'medications' | 'labResults' | 'clinicalNotes'>, registrationType?: 'Consultation' | 'Non-Consultation' | 'Technician') => { patient: Patient; token: ReceptionToken };
   updatePatient: (id: string, updates: Partial<Patient>) => void;
   updatePatientStatus: (id: string, status: Patient['status']) => void;
   addVitals: (patientId: string, vitals: Omit<Vitals, 'recordedAt'>) => void;
@@ -880,11 +880,13 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const addPatient = (
     patientData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt' | 'vitals' | 'medications' | 'labResults' | 'clinicalNotes'>,
-    registrationType: 'Consultation' | 'Non-Consultation' = 'Consultation'
-  ): Patient => {
+    registrationType: 'Consultation' | 'Non-Consultation' | 'Technician' = 'Consultation'
+  ): { patient: Patient; token: ReceptionToken } => {
     const nextNum = 10492 + patients.length + 1;
     const newId = `PT-${nextNum}`;
-    const nowIso = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const newPatient: Patient = {
       ...patientData,
       id: newId,
@@ -902,35 +904,75 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       patientName: `${newPatient.firstName} ${newPatient.lastName}`,
       patientPhone: newPatient.phone,
       doctorId: registrationType === 'Consultation' ? newPatient.primaryPhysicianId : undefined,
-      doctorName: registrationType === 'Consultation' ? newPatient.primaryPhysicianName : 'Registration Desk',
-      department: registrationType === 'Consultation' ? (newPatient.department || 'General Medicine') : 'Registration & Cashier',
-      serviceType: registrationType === 'Consultation' ? 'Consultation' : 'Billing & Cashier',
+      doctorName: registrationType === 'Technician' ? newPatient.technicianName || 'Technician Desk' : newPatient.primaryPhysicianName || 'Registration Desk',
+      department: registrationType === 'Technician' ? 'Physiotherapy' : newPatient.department || 'General Medicine',
+      serviceType: registrationType === 'Consultation' ? 'Consultation' : registrationType === 'Technician' ? 'Physio Technician' : 'Billing & Cashier',
+      visitCode: registrationType === 'Consultation' ? 'C' : registrationType === 'Technician' ? 'TEC' : 'NC',
       priority: newPatient.status === 'Emergency' ? 'Urgent' : 'Normal',
       status: 'Waiting',
       estimatedWaitMins: newPatient.status === 'Emergency' ? 10 : 20,
-      counterOrRoom: registrationType === 'Consultation' ? (newPatient.status === 'Emergency' ? 'ER Triage Desk' : 'Registration Counter 1') : 'Cashier Desk',
+      counterOrRoom: registrationType === 'Consultation' ? (newPatient.status === 'Emergency' ? 'ER Triage Desk' : 'Registration Counter 1') : registrationType === 'Technician' ? 'Physiotherapy Technician Desk' : 'Cashier Desk',
       currentStage: '1_REGISTRATION',
-      visitType: registrationType === 'Consultation' ? (newPatient.purposeOfVisit ? 'Consultation' : 'Walk-in') : 'Billing',
-      visitPurpose: registrationType === 'Consultation' ? (newPatient.purposeOfVisit || 'New patient assessment') : 'Administrative registration & billing',
-      visitComplaint: registrationType === 'Consultation' ? (newPatient.purposeOfVisit || 'Initial clinical assessment') : 'Registration and billing review',
+      visitType: registrationType === 'Consultation' ? (newPatient.purposeOfVisit ? 'Consultation' : 'Walk-in') : registrationType === 'Technician' ? 'Technician' : 'Billing',
+      visitPurpose: registrationType === 'Consultation' ? (newPatient.purposeOfVisit || 'New patient assessment') : registrationType === 'Technician' ? (newPatient.purposeOfVisit || 'Technician service') : 'Administrative registration & billing',
+      visitComplaint: registrationType === 'Consultation' ? (newPatient.purposeOfVisit || 'Initial clinical assessment') : registrationType === 'Technician' ? (newPatient.purposeOfVisit || 'Technician service') : 'Registration and billing review',
       registrationSource: 'New Registration',
       patientAge: newPatient.age,
       patientGender: newPatient.gender,
       patientDetails: {
+        registrationNumber: newPatient.rgNo || newPatient.id,
+        title: newPatient.title,
+        middleName: newPatient.middleName,
         dateOfBirth: newPatient.dob,
+        nationality: newPatient.nationality,
+        maritalStatus: newPatient.maritalStatus,
+        bloodGroup: newPatient.bloodGroup,
         email: newPatient.email,
         address: newPatient.address,
         nationalId: newPatient.emiratesId,
         passportNumber: newPatient.passportNo,
+        allergies: newPatient.allergies,
+        chronicConditions: newPatient.chronicConditions,
+        emergencyContact: newPatient.emergencyContact,
+        consentSigned: newPatient.consentSigned,
+        consentTimestamp: newPatient.consentTimestamp,
+        consentSignature: newPatient.consentSignature,
+        consentSignerRole: newPatient.consentSignerRole,
+        consentSignerRelationship: newPatient.consentSignerRelationship,
         insurancePolicyNumber: newPatient.insurance?.policyNumber,
         insuranceMemberId: newPatient.insurance?.memberId,
+        insuranceProvider: newPatient.insurance?.provider,
+        insuranceTpa: newPatient.insurance?.tpa,
+        insuranceRegulator: newPatient.insurance?.regulator,
+        insuranceNetwork: newPatient.insurance?.network,
+        insurancePlanName: newPatient.insurance?.planName,
+        insuranceCardNumber: newPatient.insurance?.cardNumber,
+        insuranceCertificateNumber: newPatient.insurance?.certificateNumber,
+        insuranceDependentNumber: newPatient.insurance?.dependentNumber,
+        insuranceClaimFormNo: newPatient.insurance?.claimFormNo,
+        insurancePreAuthorizationRequired: newPatient.insurance?.requiresPreAuthorization,
+        insuranceDailyClinicLimitAed: newPatient.insurance?.dailyClinicLimitAed,
+        insurancePreExistingWaitingPeriod: newPatient.insurance?.preExistingWaitingPeriod,
+        insuranceVerificationReference: newPatient.insurance?.verificationReference,
         insuranceStatus: newPatient.insurance?.status,
         insuranceExpiryDate: newPatient.insurance?.expiryDate,
         insuranceCards: newPatient.insuranceList,
       },
       insuranceProvider: newPatient.insurance?.provider || 'Self-Pay',
       payMode: newPatient.payMode || 'Self',
-      visitDate: nowIso.split('T')[0],
+      paymentScheme: newPatient.payMode === 'Insurance'
+        ? {
+            schemeType: 'Insurance',
+            insuranceProvider: newPatient.insurance.provider,
+            policyNumber: newPatient.insurance.policyNumber,
+            network: newPatient.insurance.network,
+            coveragePercent: newPatient.insurance.coveragePercentage,
+            preAuthStatus: newPatient.insurance.requiresPreAuthorization ? 'Pending' : 'Not Required',
+          }
+        : newPatient.payMode === 'Discount Card'
+          ? { schemeType: 'Discount Card' }
+          : { schemeType: 'Self-Pay' },
+      visitDate: nowDate,
       patientVisitSummary: registrationType === 'Consultation'
         ? `${newPatient.department || 'General Medicine'} • ${newPatient.primaryPhysicianName || 'Attending Physician'} • ${newPatient.purposeOfVisit || 'Initial consultation'}`
         : `${newPatient.department || 'General Medicine'} • Registration & billing • ${newPatient.purposeOfVisit || 'Administrative review'}`,
@@ -971,8 +1013,8 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'HIPAA Access Log'
     );
     addNotification(
-      'New Patient Admitted',
-      `${newPatient.firstName} ${newPatient.lastName} (${newId}) admitted to ${newPatient.status} with token ${registrationToken.tokenNumber}.`,
+      `Registration Complete — Reception Token ${registrationToken.tokenNumber}`,
+      `${newPatient.firstName} ${newPatient.lastName}, please proceed to ${registrationToken.counterOrRoom}.`,
       newPatient.status === 'Emergency' ? 'critical' : 'success',
       newId
     );
@@ -982,7 +1024,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'info',
       newId
     );
-    return newPatient;
+    return { patient: newPatient, token: registrationToken };
   };
 
   const updatePatient = (id: string, updates: Partial<Patient>) => {
@@ -1391,6 +1433,11 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       patientName:
         aptData.patientName ||
         (patient ? `${patient.firstName} ${patient.lastName}` : 'Patient'),
+      patientPhone: aptData.patientPhone || patient?.phone || patient?.mobile || undefined,
+      patientNationalId: aptData.patientNationalId || patient?.emiratesId || undefined,
+      patientPassportNo: aptData.patientPassportNo || patient?.passportNo || undefined,
+      patientRegistrationNo: aptData.patientRegistrationNo || patient?.rgNo || patient?.id || undefined,
+      bookingChannel: aptData.bookingChannel,
       patientAge: aptData.patientAge ?? (patient ? patient.age : 35),
       patientGender: aptData.patientGender || (patient ? patient.gender : 'Unknown'),
       doctorId: aptData.doctorId,
@@ -2063,12 +2110,12 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const createReceptionToken = (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdDate' | 'createdTime'>): ReceptionToken => {
-    const seq = 100 + receptionTokens.length + 1;
-    const tokenNumber = `T-${seq}`;
-    const id = `TOK-${seq}`;
     const now = new Date();
-    const nowDate = now.toISOString().split('T')[0];
+    const nowDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const nowTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const todaysTokens = receptionTokens.filter((token) => (token.createdDate || token.visitDate) === nowDate);
+    const tokenNumber = String(todaysTokens.length + 1).padStart(2, '0');
+    const id = `TOK-${nowDate.replace(/-/g, '')}-${tokenNumber}`;
     const patient = patients.find((item) => item.id === data.patientId);
     const newRecord: ReceptionToken = {
       ...data,
@@ -2078,18 +2125,48 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       insuranceProvider: data.insuranceProvider || patient?.insurance?.provider || 'Self-Pay',
       payMode: data.payMode || patient?.payMode || 'Self',
       department: data.department || patient?.department || 'General Medicine',
-      patientDetails: data.patientDetails || (patient ? {
-        dateOfBirth: patient.dob,
-        email: patient.email,
-        address: patient.address,
-        nationalId: patient.emiratesId,
-        passportNumber: patient.passportNo,
-        insurancePolicyNumber: patient.insurance?.policyNumber,
-        insuranceMemberId: patient.insurance?.memberId,
-        insuranceStatus: patient.insurance?.status,
-        insuranceExpiryDate: patient.insurance?.expiryDate,
-        insuranceCards: patient.insuranceList,
-      } : undefined),
+      patientDetails: {
+        ...(patient ? {
+          registrationNumber: patient.rgNo || patient.id,
+          title: patient.title,
+          middleName: patient.middleName,
+          dateOfBirth: patient.dob,
+          nationality: patient.nationality,
+          maritalStatus: patient.maritalStatus,
+          bloodGroup: patient.bloodGroup,
+          email: patient.email,
+          address: patient.address,
+          nationalId: patient.emiratesId,
+          passportNumber: patient.passportNo,
+          allergies: patient.allergies,
+          chronicConditions: patient.chronicConditions,
+          emergencyContact: patient.emergencyContact,
+          consentSigned: patient.consentSigned,
+          consentTimestamp: patient.consentTimestamp,
+          consentSignature: patient.consentSignature,
+          consentSignerRole: patient.consentSignerRole,
+          consentSignerRelationship: patient.consentSignerRelationship,
+          insurancePolicyNumber: patient.insurance?.policyNumber,
+          insuranceMemberId: patient.insurance?.memberId,
+          insuranceProvider: patient.insurance?.provider,
+          insuranceTpa: patient.insurance?.tpa,
+          insuranceRegulator: patient.insurance?.regulator,
+          insuranceNetwork: patient.insurance?.network,
+          insurancePlanName: patient.insurance?.planName,
+          insuranceCardNumber: patient.insurance?.cardNumber,
+          insuranceCertificateNumber: patient.insurance?.certificateNumber,
+          insuranceDependentNumber: patient.insurance?.dependentNumber,
+          insuranceClaimFormNo: patient.insurance?.claimFormNo,
+          insurancePreAuthorizationRequired: patient.insurance?.requiresPreAuthorization,
+          insuranceDailyClinicLimitAed: patient.insurance?.dailyClinicLimitAed,
+          insurancePreExistingWaitingPeriod: patient.insurance?.preExistingWaitingPeriod,
+          insuranceVerificationReference: patient.insurance?.verificationReference,
+          insuranceStatus: patient.insurance?.status,
+          insuranceExpiryDate: patient.insurance?.expiryDate,
+          insuranceCards: patient.insuranceList,
+        } : {}),
+        ...data.patientDetails,
+      },
       id,
       tokenNumber,
       createdDate: nowDate,
@@ -2102,8 +2179,23 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           actor: 'Registration Desk',
         },
       ],
+      visitCode: data.visitCode || (data.serviceType === 'Consultation' ? 'C' : data.serviceType === 'Physio Technician' ? 'TEC' : 'NC'),
+      registeredBy: data.registeredBy || currentUser?.name || 'Hospital Staff',
     };
-    setReceptionTokens((prev) => [newRecord, ...prev]);
+    setReceptionTokens((prev) => {
+      const todayTokens = prev.filter((token) => (token.createdDate || token.visitDate) === nowDate);
+      const tokenNumbers = new Map(todayTokens.map((token, index) => [
+        token.id,
+        String(todayTokens.length - index).padStart(2, '0'),
+      ]));
+      return [
+        newRecord,
+        ...prev.map((token) => tokenNumbers.has(token.id)
+          ? { ...token, tokenNumber: tokenNumbers.get(token.id) || token.tokenNumber }
+          : token
+        ),
+      ];
+    });
     addNotification(
       'Queue Token Generated',
       `Token ${tokenNumber} issued to ${data.patientName} for ${data.department} (${data.counterOrRoom}).`,
@@ -2113,15 +2205,23 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateReceptionTokenStatus = (id: string, status: ReceptionToken['status']) => {
-    const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const timestamp = new Date();
+    const now = timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     setReceptionTokens((prev) =>
       prev.map((tok) => {
         if (tok.id === id) {
+          const logItem = {
+            stage: tok.currentStage || '1_REGISTRATION',
+            timestamp: timestamp.toISOString(),
+            action: `Visit status changed to ${status}`,
+            actor: currentUser?.name || 'Hospital Staff',
+          };
           return {
             ...tok,
             status,
             calledAt: status === 'In Consultation' ? now : tok.calledAt,
             completedAt: status === 'Completed' ? now : tok.completedAt,
+            historyLogs: [...(tok.historyLogs || []), logItem],
           };
         }
         return tok;
@@ -2254,6 +2354,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addClinicalNote(targetToken.patientId, {
           doctorName: orders.orderedByDoctorName,
           doctorSpecialty: targetToken.department,
+          encounterTokenId: tokenId,
           chiefComplaint: orders.chiefComplaint || 'Clinical Consultation',
           assessment: orders.clinicalAssessment || orders.healthSummary || 'Encounter documented',
           treatmentPlan: `Orders: ${[
@@ -2262,6 +2363,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             ...orders.procedureRequests.map((p) => p.procedureName),
           ].join(', ')}`,
           diagnosisCode: orders.diagnoses[0]?.code ? `ICD-10 ${orders.diagnoses[0].code}` : undefined,
+          diagnoses: orders.diagnoses.map((diagnosis) => `${diagnosis.code} ${diagnosis.description}`),
         });
       }
     }
@@ -2281,7 +2383,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const logItem = {
             stage: '4_CASHIER_BILLING' as TokenWorkflowStage,
             timestamp: now,
-            action: `Invoice settled. Subtotal: $${billing.subtotal}, Covered/Discount: $${(billing.insuranceCoveredAmount + billing.discountAmount).toFixed(2)}, Patient Paid: $${billing.totalPaid} (${billing.paymentMethod})`,
+            action: `Invoice settled. Subtotal: AED ${billing.subtotal.toFixed(2)}, Covered/Discount: AED ${(billing.insuranceCoveredAmount + billing.discountAmount).toFixed(2)}, Patient Paid: AED ${billing.totalPaid.toFixed(2)} (${billing.paymentMethod}).${billing.insuranceAuthorizationStatus ? ` Authorization: ${billing.insuranceAuthorizationStatus}.` : ''}${billing.dailyInsuranceLimitApplied ? ` Daily insurance cap enforced: AED ${billing.dailyInsuranceUsedAfterAed?.toFixed(2)} / AED ${billing.dailyInsuranceLimitAed?.toFixed(2)}.` : ''}`,
             actor: billing.cashierName,
           };
 

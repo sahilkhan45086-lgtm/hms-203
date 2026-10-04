@@ -41,6 +41,7 @@ import { StaffManagement } from './components/StaffManagement';
 import { ReportsAnalytics } from './components/ReportsAnalytics';
 import { AdminCompliance } from './components/AdminCompliance';
 import { PatientRegistrationDesk } from './components/PatientRegistrationDesk';
+import { WorkflowAssistant } from './components/WorkflowAssistant';
 
 const HospitalAppContent: React.FC = () => {
   const {
@@ -277,6 +278,9 @@ const HospitalAppContent: React.FC = () => {
 
       {/* Operational Footer Bar */}
       <FooterBar />
+
+      {/* Role-aware workflow help */}
+      <WorkflowAssistant />
 
       {/* Floating System Modals */}
       <NewPatientModal

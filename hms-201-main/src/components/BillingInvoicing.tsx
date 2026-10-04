@@ -494,6 +494,11 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
                       <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-2.5 px-3 whitespace-nowrap font-mono font-bold text-slate-800">
                           {inv.id}
+                          {inv.encounterTokenId && (
+                            <div className="mt-0.5 font-sans text-[9px] font-semibold text-teal-700">
+                              Token {receptionTokens.find((token) => token.id === inv.encounterTokenId)?.tokenNumber || inv.encounterTokenId}
+                            </div>
+                          )}
                           {inv.encounterType && <div className="mt-0.5 font-sans text-[9px] font-semibold text-slate-500">{inv.encounterType} encounter</div>}
                         </td>
 

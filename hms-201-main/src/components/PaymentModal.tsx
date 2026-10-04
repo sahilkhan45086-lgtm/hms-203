@@ -19,7 +19,7 @@ interface PaymentModalProps {
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, isOpen, onClose }) => {
-  const { patients, advancePayments, processSplitPayments } = useHospital();
+  const { patients, advancePayments, receptionTokens, processSplitPayments } = useHospital();
   const [paymentLines, setPaymentLines] = useState<Array<{ id: string; method: PaymentMethod; amount: string; advanceId?: string }>>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRequestingOtp, setIsRequestingOtp] = useState(false);
@@ -51,6 +51,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, isOpen, onC
 
   const balanceDue = Number(invoice.balanceDue) || 0;
   const patient = patients.find((item) => item.id === invoice.patientId);
+  const encounterToken = receptionTokens.find((token) => token.id === invoice.encounterTokenId);
   const patientAdvancePayments = advancePayments
     .filter((advance) => advance.patientId === invoice.patientId)
     .sort((first, second) =>
@@ -274,6 +275,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, isOpen, onC
               <div>
                 <div className="font-bold text-slate-800">{invoice.patientName}</div>
                 <div className="text-[10px] text-slate-400 font-mono">Invoice: {invoice.id}</div>
+                {invoice.encounterTokenId && <div className="text-[10px] font-semibold text-teal-700">Visit token: {encounterToken?.tokenNumber || invoice.encounterTokenId}</div>}
               </div>
               <div className="text-right">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">Remaining Due</div>

@@ -34,12 +34,15 @@ export const TriageStationView: React.FC<TriageStationViewProps> = ({ onSelectPa
     setActiveTab,
     updatePatientStatus,
     addNotification,
+    currentRole,
+    currentUser,
   } = useHospital();
   const [selectedPatientForForm, setSelectedPatientForForm] = useState<string | null>(null);
   const [filterLevel, setFilterLevel] = useState<string>('all');
   const [visitSearch, setVisitSearch] = useState('');
   const [expandedVisitId, setExpandedVisitId] = useState<string | null>(null);
   const [workflowTokenId, setWorkflowTokenId] = useState<string | null>(null);
+  const [doctorFilter, setDoctorFilter] = useState('all');
 
   const patientsWithTriage = patients.filter((p) => p.latestTriage);
 
@@ -57,8 +60,15 @@ export const TriageStationView: React.FC<TriageStationViewProps> = ({ onSelectPa
   const level1Count = patients.filter((p) => p.latestTriage?.urgencyLevel.includes('Level 1')).length;
   const level2Count = patients.filter((p) => p.latestTriage?.urgencyLevel.includes('Level 2')).length;
   const emergencyCount = patients.filter((p) => p.status === 'Emergency').length;
+  const normalizeDoctorName = (name: string) =>
+    name.toLowerCase().replace(/^dr\.?\s*/, '').replace(/,?\s*(md|facs|do|phd)\b/g, '').replace(/[.,]/g, '').trim();
+  const doctorOptions = [...new Set(receptionTokens.map((token) => token.doctorName).filter((name): name is string => Boolean(name)))].sort();
   const registeredVisitTokens = receptionTokens
     .filter((token) => token.patientId !== 'WALK-IN' && token.patientId)
+    .filter((token) => currentRole !== 'doctor' ||
+      token.doctorId === currentUser.id ||
+      normalizeDoctorName(token.doctorName || '') === normalizeDoctorName(currentUser.name))
+    .filter((token) => doctorFilter === 'all' || token.doctorName === doctorFilter)
     .filter((token) => {
       const query = visitSearch.trim().toLowerCase();
       return !query || `${token.tokenNumber} ${token.patientName} ${token.patientId} ${token.department} ${token.doctorName || ''}`.toLowerCase().includes(query);
@@ -183,6 +193,17 @@ export const TriageStationView: React.FC<TriageStationViewProps> = ({ onSelectPa
               className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-8 pr-3 text-xs"
             />
           </label>
+          {(currentRole === 'nurse' || currentRole === 'admin') && (
+            <select
+              value={doctorFilter}
+              onChange={(event) => setDoctorFilter(event.target.value)}
+              aria-label="Filter registered visits by doctor"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs sm:w-56"
+            >
+              <option value="all">All doctors</option>
+              {doctorOptions.map((doctorName) => <option key={doctorName} value={doctorName}>{doctorName}</option>)}
+            </select>
+          )}
         </div>
 
         {registeredVisitTokens.length === 0 ? (
@@ -200,6 +221,14 @@ export const TriageStationView: React.FC<TriageStationViewProps> = ({ onSelectPa
               );
               const tokenDate = token.visitDate || token.createdDate || 'Date not recorded';
               const vitals = token.vitals;
+              const medicalReports = [...(patient?.clinicalNotes || [])]
+                .sort((first, second) => second.date.localeCompare(first.date));
+              const currentMedicalReports = medicalReports.filter((report) =>
+                report.encounterTokenId === token.id || (!report.encounterTokenId && report.date === tokenDate)
+              );
+              const pastMedicalReports = medicalReports.filter((report) =>
+                report.encounterTokenId !== token.id && (report.encounterTokenId || report.date !== tokenDate)
+              );
               return (
                 <article key={token.id} className="p-3 sm:p-4">
                   <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
@@ -275,6 +304,36 @@ export const TriageStationView: React.FC<TriageStationViewProps> = ({ onSelectPa
                           {(patient?.labResults || []).map((report) => <p key={report.id} className="text-[10px] text-slate-700">{report.resultDate || report.orderedDate} · {report.testName} · {report.status}{report.impression ? ` · ${report.impression}` : ''}</p>)}
                           {!token.diagnosticReports?.length && !patient?.labResults?.length && <p className="text-[10px] text-slate-500">No diagnostic reports on file.</p>}
                         </div>
+                      </section>
+
+                      <section className="rounded-lg border border-slate-200 p-3 lg:col-span-2">
+                        <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-700"><FileText className="h-3.5 w-3.5" /> Doctor medical reports</h4>
+                        <h5 className="mb-1 text-[9px] font-bold uppercase text-teal-700">Current visit · {token.tokenNumber}</h5>
+                        {currentMedicalReports.length ? (
+                          <ul className="space-y-1.5">
+                            {currentMedicalReports.map((report) => (
+                              <li key={report.id} className="rounded bg-teal-50/70 p-2 text-[10px] text-slate-700">
+                                <p className="font-semibold text-slate-900">{report.date} · {report.doctorName || report.authorName || 'Doctor'} · {report.category || 'Medical report'}</p>
+                                {report.chiefComplaint && <p>Chief complaint: {report.chiefComplaint}</p>}
+                                <p>{report.assessment || report.content || 'No summary recorded.'}</p>
+                                {report.treatmentPlan && <p>Plan: {report.treatmentPlan}</p>}
+                                {(report.diagnoses?.length || report.diagnosisCode) && <p>Diagnosis: {report.diagnoses?.join(', ') || report.diagnosisCode}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="text-[10px] text-slate-500">No doctor medical report saved for this visit.</p>}
+                        <h5 className="mb-1 mt-3 text-[9px] font-bold uppercase text-slate-500">Past visit medical reports</h5>
+                        {pastMedicalReports.length ? (
+                          <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+                            {pastMedicalReports.map((report) => (
+                              <li key={report.id} className="rounded bg-slate-50 p-2 text-[10px] text-slate-700">
+                                <p className="font-semibold text-slate-900">{report.date} · {report.doctorName || report.authorName || 'Doctor'} · {report.category || 'Medical report'}</p>
+                                <p>{report.assessment || report.content || report.chiefComplaint || 'No summary recorded.'}</p>
+                                {(report.diagnoses?.length || report.diagnosisCode) && <p>Diagnosis: {report.diagnoses?.join(', ') || report.diagnosisCode}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="text-[10px] text-slate-500">No past visit medical reports recorded.</p>}
                       </section>
                     </div>
                   )}

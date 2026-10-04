@@ -78,12 +78,7 @@ export const DailyTokensView: React.FC = () => {
       name = 'Anonymous Walk-in Patient';
     }
 
-    const nextNum = totalTokens + 101;
-    const tokenNumber = `T-${nextNum}`;
-    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-    createReceptionToken({
-      tokenNumber,
+    const createdToken = createReceptionToken({
       patientId,
       patientName: name,
       patientPhone: phone,
@@ -92,7 +87,6 @@ export const DailyTokensView: React.FC = () => {
       counterOrRoom,
       priority,
       status: 'Waiting',
-      createdTime: time,
       estimatedWaitMins: waitingTokens.length * 10,
       currentStage: '1_REGISTRATION',
       paymentScheme:
@@ -104,7 +98,7 @@ export const DailyTokensView: React.FC = () => {
     });
 
     addNotification({
-      title: `Token ${tokenNumber} Issued`,
+      title: `Token ${createdToken.tokenNumber} Issued`,
       message: `Token for ${name} created under ${department} (${counterOrRoom}).`,
       type: 'info',
     });

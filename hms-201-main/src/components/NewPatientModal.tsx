@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useHospital } from '../context/HospitalContext';
 import { BloodGroup, PatientStatus, Patient, PaymentSchemeType } from '../types';
+import { printReceptionToken } from '../utils/printReceptionToken';
 
 interface NewPatientModalProps {
   isOpen: boolean;
@@ -26,6 +27,26 @@ interface NewPatientModalProps {
   initialPatientId?: string;
 }
 
+type RegistrationSection = 'demographics' | 'contact' | 'clinical' | 'insurance';
+type RegistrationView = 'registration' | 'consent';
+
+const registrationSuggestions: Record<string, string[]> = {
+  cities: ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah', 'Al Ain'],
+  nationalities: ['United Arab Emirates', 'India', 'Pakistan', 'Bangladesh', 'Philippines', 'Egypt', 'Jordan', 'Lebanon', 'Syria', 'Nepal', 'Sri Lanka', 'United Kingdom', 'United States', 'Canada'],
+  countries: ['United Arab Emirates', 'Saudi Arabia', 'Oman', 'Qatar', 'Bahrain', 'Kuwait', 'India', 'Pakistan', 'Bangladesh', 'Philippines', 'Egypt', 'Jordan', 'Lebanon', 'United Kingdom', 'United States', 'Canada'],
+  languages: ['Arabic', 'English', 'Hindi', 'Urdu', 'Bengali', 'Tagalog', 'Malayalam', 'Tamil', 'Nepali', 'Sinhalese', 'French'],
+  areas: ['Al Reem Island', 'Khalifa City', 'Mohammed Bin Zayed City', 'Al Khalidiyah', 'Al Maryah Island', 'Downtown Dubai', 'Dubai Marina', 'Jumeirah', 'Deira', 'Bur Dubai', 'Al Nahda', 'Al Majaz', 'Al Taawun', 'Al Jurf'],
+  districts: ['Abu Dhabi', 'Al Ain', 'Al Dhafra', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'],
+  visaCategories: ['UAE Citizen', 'Residence Visa', 'Visit Visa', 'GCC Citizen', 'Employment Visa', 'Investor Visa', 'Family Visa', 'Student Visa', 'Golden Visa', 'Transit Visa'],
+  occupations: ['Healthcare Professional', 'Government Employee', 'Private Sector Employee', 'Business Owner', 'Student', 'Homemaker', 'Retired', 'Self-employed', 'Unemployed'],
+  religions: ['Islam', 'Christianity', 'Hinduism', 'Buddhism', 'Sikhism', 'Judaism', 'Other', 'Prefer not to disclose'],
+};
+const uaeInsuranceSuggestions = {
+  payers: ['Daman', 'Sukoon', 'ADNIC', 'GIG Gulf', 'Orient Insurance', 'Dubai Insurance', 'Union Insurance', 'National General Insurance', 'Al Buhaira National Insurance'],
+  tpas: ['NAS', 'NextCare', 'MedNet', 'Almadallah', 'Inayah', 'FMC Network UAE'],
+  networks: ['Basic', 'Standard', 'Enhanced', 'Comprehensive', 'Thiqa', 'Abu Dhabi Basic', 'Dubai Essential Benefits Plan (EBP)'],
+};
+
 export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   isOpen,
   onClose,
@@ -33,18 +54,17 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   initialPatientId,
 }) => {
   const { patients, doctors, wardBeds, addPatient, updatePatient, addNotification } = useHospital();
-
-  const [activeTab, setActiveTab] = useState<'demographics' | 'contact' | 'clinical' | 'insurance'>('demographics');
+  const [registrationView, setRegistrationView] = useState<RegistrationView>('registration');
 
   // Demographics
-  const [title, setTitle] = useState('Mr.');
+  const [title, setTitle] = useState('');
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [dob, setDob] = useState('1990-01-01');
-  const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
-  const [bloodGroup, setBloodGroup] = useState<BloodGroup>('O+');
-  const [maritalStatus, setMaritalStatus] = useState<'Single' | 'Married' | 'Divorced' | 'Widowed'>('Single');
+  const [dob, setDob] = useState('');
+  const [gender, setGender] = useState<Patient['gender'] | ''>('');
+  const [bloodGroup, setBloodGroup] = useState<BloodGroup>('Unknown');
+  const [maritalStatus, setMaritalStatus] = useState<Patient['maritalStatus'] | ''>('');
   const [photo, setPhoto] = useState('');
 
   // Contact & ID
@@ -53,10 +73,27 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   const [nationalId, setNationalId] = useState('');
   const [passportNo, setPassportNo] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('Metropolis');
+  const [city, setCity] = useState('');
+  const [nationality, setNationality] = useState('');
+  const [language, setLanguage] = useState('');
+  const [religion, setReligion] = useState('');
+  const [visaCategory, setVisaCategory] = useState('');
+  const [countryOfResidence, setCountryOfResidence] = useState('');
+  const [area, setArea] = useState('');
+  const [district, setDistrict] = useState('');
+  const [occupation, setOccupation] = useState('');
+  const [company, setCompany] = useState('');
   const [emergencyName, setEmergencyName] = useState('');
-  const [emergencyRelation, setEmergencyRelation] = useState('Spouse');
+  const [emergencyRelation, setEmergencyRelation] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
+  const [referralType, setReferralType] = useState<NonNullable<Patient['referral']>['type']>('Walk-In');
+  const [referrerName, setReferrerName] = useState('');
+  const [consentSigned, setConsentSigned] = useState(false);
+  const [consentSignature, setConsentSignature] = useState('');
+  const [consentTimestamp, setConsentTimestamp] = useState('');
+  const [consentDetailsAtSigning, setConsentDetailsAtSigning] = useState('');
+  const [consentSignerRole, setConsentSignerRole] = useState<NonNullable<Patient['consentSignerRole']>>('Patient');
+  const [consentSignerRelationship, setConsentSignerRelationship] = useState('');
 
   // Clinical & Admission
   const [status, setStatus] = useState<PatientStatus>('Outpatient');
@@ -66,21 +103,33 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [allergiesInput, setAllergiesInput] = useState('');
   const [chronicInput, setChronicInput] = useState('');
-  const [isReadingCard, setIsReadingCard] = useState(false);
 
   // Insurance & Billing
-  const [payMode, setPayMode] = useState<'Self' | 'Insurance' | 'Discount Card'>('Insurance');
-  const [insuranceProvider, setInsuranceProvider] = useState('MetLife Health');
-  const [policyNumber, setPolicyNumber] = useState('POL-992014');
-  const [tpa, setTpa] = useState('TPA 8');
-  const [memberId, setMemberId] = useState('52GM0455892711901');
-  const [dhaMemberId, setDhaMemberId] = useState('I137-001-118716420-01');
-  const [clientNumber, setClientNumber] = useState('INS137');
-  const [copayPercent, setCopayPercent] = useState(20);
+  const [payMode, setPayMode] = useState<'Self' | 'Insurance' | 'Discount Card'>('Self');
+  const [insuranceProvider, setInsuranceProvider] = useState('');
+  const [insuranceRegulator, setInsuranceRegulator] = useState<NonNullable<Patient['insurance']>['regulator'] | ''>('');
+  const [insuranceNetwork, setInsuranceNetwork] = useState('');
+  const [insurancePlanName, setInsurancePlanName] = useState('');
+  const [insuranceCardNumber, setInsuranceCardNumber] = useState('');
+  const [policyNumber, setPolicyNumber] = useState('');
+  const [groupNumber, setGroupNumber] = useState('');
+  const [insuranceExpiryDate, setInsuranceExpiryDate] = useState('');
+  const [tpa, setTpa] = useState('');
+  const [memberId, setMemberId] = useState('');
+  const [certificateNumber, setCertificateNumber] = useState('');
+  const [dependentNumber, setDependentNumber] = useState('');
+  const [claimFormNo, setClaimFormNo] = useState('');
+  const [requiresPreAuthorization, setRequiresPreAuthorization] = useState(false);
+  const [preExistingWaitingPeriod, setPreExistingWaitingPeriod] = useState('');
+  const [verificationReference, setVerificationReference] = useState('');
+  const [dailyClinicLimitAed, setDailyClinicLimitAed] = useState('');
+  const [dhaMemberId, setDhaMemberId] = useState('');
+  const [clientNumber, setClientNumber] = useState('');
+  const [copayPercent, setCopayPercent] = useState(0);
   const [registrationType, setRegistrationType] = useState<'Consultation' | 'Non-Consultation' | 'Technician'>('Consultation');
   const [physioTechnician, setPhysioTechnician] = useState('Ahmed Hassan - Physiotherapy Technician');
-  const [discountCardName, setDiscountCardName] = useState('Hospital Employee Staff Card');
-  const [discountPercent, setDiscountPercent] = useState(20);
+  const [discountCardName, setDiscountCardName] = useState('');
+  const [discountPercent, setDiscountPercent] = useState(0);
   const [insuranceCardImage, setInsuranceCardImage] = useState('');
   const [supportDocumentImage, setSupportDocumentImage] = useState('');
   const [serviceCopay, setServiceCopay] = useState({ consultation: 20, dental: 20, procedure: 20, laboratory: 20, lab: 20, radiology: 20, pharmacy: 20, procedures: 20, surgicalProcedure: 20, emergency: 10 });
@@ -99,9 +148,9 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
 
   // Auto-calculate age from DOB
   const calculateAge = (birthDateString: string): number => {
-    if (!birthDateString) return 30;
+    if (!birthDateString) return 0;
     const today = new Date();
-    const birthDate = new Date(birthDateString);
+    const birthDate = new Date(`${birthDateString}T00:00:00`);
     let age = today.getFullYear() - birthDate.getFullYear();
     const m = today.getMonth() - birthDate.getMonth();
     if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
@@ -113,25 +162,42 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   const calculatedAge = calculateAge(dob);
 
   const clearForm = () => {
-    setActiveTab('demographics');
-    setTitle('Mr.');
+    setTitle('');
     setFirstName('');
     setMiddleName('');
     setLastName('');
-    setDob('1990-01-01');
-    setGender('Male');
-    setBloodGroup('O+');
-    setMaritalStatus('Single');
+    setDob('');
+    setGender('');
+    setBloodGroup('Unknown');
+    setMaritalStatus('');
     setPhoto('');
     setPhone('');
     setEmail('');
     setNationalId('');
     setPassportNo('');
     setAddress('');
-    setCity('Metropolis');
+    setCity('');
+    setNationality('');
+    setLanguage('');
+    setReligion('');
+    setVisaCategory('');
+    setCountryOfResidence('');
+    setArea('');
+    setDistrict('');
+    setOccupation('');
+    setCompany('');
     setEmergencyName('');
-    setEmergencyRelation('Spouse');
+    setEmergencyRelation('');
     setEmergencyPhone('');
+    setReferralType('Walk-In');
+    setReferrerName('');
+    setConsentSigned(false);
+    setConsentSignature('');
+    setConsentTimestamp('');
+    setConsentDetailsAtSigning('');
+    setConsentSignerRole('Patient');
+    setConsentSignerRelationship('');
+    setRegistrationView('registration');
     setStatus('Outpatient');
     setDepartment('General Medicine');
     setDoctorId(doctors[0]?.id || '');
@@ -139,20 +205,33 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     setChiefComplaint('');
     setAllergiesInput('');
     setChronicInput('');
-    setPayMode('Insurance');
-    setInsuranceProvider('MetLife Health');
+    setPayMode('Self');
+    setInsuranceProvider('');
+    setInsuranceRegulator('');
+    setInsuranceNetwork('');
+    setInsurancePlanName('');
+    setInsuranceCardNumber('');
     setInsuranceCardImage('');
     setSupportDocumentImage('');
-    setPolicyNumber('POL-992014');
-    setTpa('TPA 8');
-    setMemberId('52GM0455892711901');
-    setDhaMemberId('I137-001-118716420-01');
-    setClientNumber('INS137');
-    setCopayPercent(20);
+    setPolicyNumber('');
+    setGroupNumber('');
+    setInsuranceExpiryDate('');
+    setTpa('');
+    setMemberId('');
+    setCertificateNumber('');
+    setDependentNumber('');
+    setClaimFormNo('');
+    setRequiresPreAuthorization(false);
+    setPreExistingWaitingPeriod('');
+    setVerificationReference('');
+    setDailyClinicLimitAed('');
+    setDhaMemberId('');
+    setClientNumber('');
+    setCopayPercent(0);
     setRegistrationType('Consultation');
     setPhysioTechnician('Ahmed Hassan - Physiotherapy Technician');
-    setDiscountCardName('Hospital Employee Staff Card');
-    setDiscountPercent(20);
+    setDiscountCardName('');
+    setDiscountPercent(0);
     setServiceCopay({ consultation: 20, dental: 20, procedure: 20, laboratory: 20, lab: 20, radiology: 20, pharmacy: 20, procedures: 20, surgicalProcedure: 20, emergency: 10 });
     setCopayRules({
       consultation: { minPercent: 10, maxPercent: 25, minAmount: 50, maxAmount: 150 },
@@ -168,89 +247,46 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     });
   };
 
-  const handleNationalIdCardRead = () => {
-    const cardProfiles = [
-      {
-        nationalId: '784-1990-1234567-1',
-        title: 'Ms.',
-        firstName: 'Aisha',
-        middleName: 'Nabil',
-        lastName: 'Al Rahmani',
-        dob: '1990-04-18',
-        gender: 'Female' as const,
-        phone: '+971 50 112 4433',
-        email: 'aisha.alrahmani@example.com',
-        address: 'Villa 22, Al Nahda Street',
-        city: 'Dubai',
-        emergencyName: 'Nabil Al Rahmani',
-        emergencyRelation: 'Father',
-        emergencyPhone: '+971 50 778 9921',
-      },
-      {
-        nationalId: '784-1987-7654321-9',
-        title: 'Mr.',
-        firstName: 'Omar',
-        middleName: 'Hassan',
-        lastName: 'Bin Salem',
-        dob: '1987-11-24',
-        gender: 'Male' as const,
-        phone: '+971 55 204 1188',
-        email: 'omar.bin-salem@example.com',
-        address: 'Apartment 4B, Sheikh Zayed Road',
-        city: 'Abu Dhabi',
-        emergencyName: 'Hassan Bin Salem',
-        emergencyRelation: 'Brother',
-        emergencyPhone: '+971 50 345 7654',
-      },
-    ];
-
-    const matchedProfile =
-      cardProfiles.find((profile) => profile.nationalId === nationalId.trim()) || cardProfiles[0];
-
-    setIsReadingCard(true);
-    window.setTimeout(() => {
-      setTitle(matchedProfile.title);
-      setFirstName(matchedProfile.firstName);
-      setMiddleName(matchedProfile.middleName);
-      setLastName(matchedProfile.lastName);
-      setDob(matchedProfile.dob);
-      setGender(matchedProfile.gender);
-      setPhone(matchedProfile.phone);
-      setEmail(matchedProfile.email);
-      setNationalId(matchedProfile.nationalId);
-      setAddress(matchedProfile.address);
-      setCity(matchedProfile.city);
-      setEmergencyName(matchedProfile.emergencyName);
-      setEmergencyRelation(matchedProfile.emergencyRelation);
-      setEmergencyPhone(matchedProfile.emergencyPhone);
-      setActiveTab('demographics');
-      setIsReadingCard(false);
-      addNotification('Emirates ID Read', `${matchedProfile.firstName} ${matchedProfile.lastName} details were loaded from the card reader.`, 'success', matchedProfile.nationalId);
-    }, 500);
-  };
-
   // Pre-fill if editing existing
   useEffect(() => {
     if (initialPatientId) {
       const existing = patients.find((p) => p.id === initialPatientId);
       if (existing) {
-        setTitle(existing.title || 'Mr.');
+        setTitle(existing.title || '');
         setFirstName(existing.firstName || '');
         setMiddleName(existing.middleName || '');
         setLastName(existing.lastName || '');
-        setDob(existing.dob || '1990-01-01');
-        setGender(existing.gender || 'Male');
-        setBloodGroup(existing.bloodGroup || 'O+');
-        setMaritalStatus(existing.maritalStatus || 'Single');
+        setDob(existing.dob || '');
+        setGender(existing.gender || '');
+        setBloodGroup(existing.bloodGroup || 'Unknown');
+        setMaritalStatus(existing.maritalStatus || '');
         setPhoto(existing.photo || '');
         setPhone(existing.phone || '');
         setEmail(existing.email || '');
         setNationalId(existing.emiratesId || '');
         setPassportNo(existing.passportNo || '');
         setAddress(existing.address || '');
+        setCity('');
+        setNationality(existing.nationality || '');
+        setLanguage(existing.language || '');
+        setReligion(existing.religion || '');
+        setVisaCategory(existing.visaCategory || '');
+        setCountryOfResidence(existing.countryOfResidence || '');
+        setArea(existing.area || '');
+        setDistrict(existing.district || '');
+        setOccupation(existing.occupation || '');
+        setCompany(existing.company || '');
         setEmergencyName(existing.emergencyContact?.name || '');
-        setEmergencyRelation(existing.emergencyContact?.relationship || 'Spouse');
+        setEmergencyRelation(existing.emergencyContact?.relationship || '');
         setEmergencyPhone(existing.emergencyContact?.phone || '');
+        setReferralType(existing.referral?.type || 'Walk-In');
+        setReferrerName(existing.referral?.referrerName || '');
+        setConsentSigned(false);
+        setConsentSignature('');
+        setConsentTimestamp('');
+        setConsentDetailsAtSigning('');
+        setConsentSignerRole('Patient');
+        setConsentSignerRelationship('');
         setStatus(existing.status || 'Outpatient');
         setDepartment(existing.department || 'General Medicine');
         setDoctorId(existing.primaryPhysicianId || doctors[0]?.id || '');
@@ -258,17 +294,32 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         setChiefComplaint(existing.purposeOfVisit || '');
         setAllergiesInput(existing.allergies?.map((a) => a.allergen).join(', ') || '');
         setChronicInput(existing.chronicConditions?.join(', ') || '');
-        setInsuranceProvider(existing.insurance?.provider || 'MetLife Health');
-        setPolicyNumber(existing.insurance?.policyNumber || 'POL-992014');
-        setTpa(existing.insurance?.tpa || 'TPA 8');
-        setMemberId(existing.insurance?.memberId || '52GM0455892711901');
-        setDhaMemberId(existing.insurance?.dhaMemberId || 'I137-001-118716420-01');
-        setClientNumber(existing.insurance?.clientNumber || 'INS137');
-        setCopayPercent(existing.insurance?.copayPercentage || 20);
+        setInsuranceProvider(existing.insurance?.provider || '');
+        setInsuranceRegulator(existing.insurance?.regulator || '');
+        setInsuranceNetwork(existing.insurance?.network || '');
+        setInsurancePlanName(existing.insurance?.planName || '');
+        setInsuranceCardNumber(existing.insurance?.cardNumber || '');
+        setPolicyNumber(existing.insurance?.policyNumber || '');
+        setGroupNumber(existing.insurance?.groupNumber || '');
+        setInsuranceExpiryDate(existing.insurance?.expiryDate || '');
+        setTpa(existing.insurance?.tpa || '');
+        setMemberId(existing.insurance?.memberId || '');
+        setCertificateNumber(existing.insurance?.certificateNumber || '');
+        setDependentNumber(existing.insurance?.dependentNumber || '');
+        setClaimFormNo(existing.insurance?.claimFormNo || '');
+        setRequiresPreAuthorization(existing.insurance?.requiresPreAuthorization || false);
+        setPreExistingWaitingPeriod(existing.insurance?.preExistingWaitingPeriod || '');
+        setVerificationReference(existing.insurance?.verificationReference || '');
+        setDailyClinicLimitAed(existing.insurance?.dailyClinicLimitAed?.toString() || '');
+        setDhaMemberId(existing.insurance?.dhaMemberId || '');
+        setClientNumber(existing.insurance?.clientNumber || '');
+        setCopayPercent(100 - (existing.insurance?.coveragePercentage ?? 100));
         setServiceCopay(existing.insurance?.serviceCopay || { consultation: 20, dental: 20, procedure: 20, laboratory: 20, lab: 20, radiology: 20, pharmacy: 20, procedures: 20, surgicalProcedure: 20, emergency: 10 });
         setInsuranceCardImage(existing.insuranceCardImage || '');
         setSupportDocumentImage(existing.supportDocumentImage || '');
-        setPayMode(existing.payMode === 'Discount Card' || existing.payMode === 'Company' ? 'Discount Card' : existing.payMode || 'Insurance');
+        setPayMode(existing.payMode === 'Discount Card' || existing.payMode === 'Company'
+          ? 'Discount Card'
+          : existing.payMode || (existing.insurance?.provider === 'Self-Pay' ? 'Self' : 'Insurance'));
       }
     }
   }, [initialPatientId, patients, doctors, isOpen]);
@@ -286,11 +337,80 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
 
   if (!isOpen) return null;
 
+  const consentPatientName = `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, ' ').trim();
+  const consentAddress = [address.trim(), city.trim()].filter(Boolean).join(', ');
+  const consentPatientDetails = [
+    consentPatientName,
+    dob,
+    gender,
+    phone.trim(),
+    nationalId.trim(),
+    passportNo.trim(),
+    consentAddress,
+  ].join('|');
+  const consentSignerName = consentSignerRole === 'Patient' ? consentPatientName : consentSignature.trim();
+  const hasCurrentConsent = consentSigned && consentTimestamp.length > 0 && consentDetailsAtSigning === consentPatientDetails;
+
+  const registrationSections: RegistrationSection[] = ['demographics', 'contact', 'clinical', 'insurance'];
+  const validateSection = (step: RegistrationSection) => {
+    if (step === 'demographics') {
+      const birthDate = dob ? new Date(`${dob}T00:00:00`) : null;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (!firstName.trim() || !lastName.trim() || !dob || !gender || !birthDate || Number.isNaN(birthDate.getTime()) || birthDate > today) {
+        addNotification('Patient Details Required', 'Enter the patient’s first name, last name, date of birth, and gender to continue.', 'warning');
+        return false;
+      }
+    }
+
+    if (step === 'contact') {
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+        addNotification('Valid Phone Required', 'Enter a patient phone number with 7 to 15 digits.', 'warning');
+        return false;
+      }
+      if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        addNotification('Valid Email Required', 'Enter a valid email address or leave the email field blank.', 'warning');
+        return false;
+      }
+      const emergencyDigits = emergencyPhone.replace(/\D/g, '');
+      if (emergencyPhone.trim() && (emergencyDigits.length < 7 || emergencyDigits.length > 15)) {
+        addNotification('Valid Emergency Phone Required', 'Enter an emergency phone number with 7 to 15 digits.', 'warning');
+        return false;
+      }
+    }
+
+    if (step === 'clinical' && status === 'Inpatient' && !wardOrRoom) {
+      addNotification('Bed Assignment Required', 'Select an available bed before registering an inpatient.', 'warning');
+      return false;
+    }
+
+    if (step === 'insurance' && payMode === 'Insurance' && (!insuranceProvider.trim() || (!policyNumber.trim() && !memberId.trim()))) {
+      addNotification('Insurance Details Required', 'Enter the insurer and either the policy number or member ID, or select another payment mode.', 'warning');
+      return false;
+    }
+    if (step === 'insurance' && payMode === 'Insurance' && insuranceExpiryDate && insuranceExpiryDate < new Date().toISOString().split('T')[0]) {
+      addNotification('Insurance Card Expired', 'This policy expiry date has passed. Verify the policy or select another payment mode.', 'warning');
+      return false;
+    }
+    if (step === 'insurance' && payMode === 'Discount Card' && !discountCardName.trim()) {
+      addNotification('Discount Card Required', 'Enter the approved discount card name or select another payment mode.', 'warning');
+      return false;
+    }
+
+    return true;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (registrationView !== 'registration') return;
 
-    if (!firstName.trim() || !lastName.trim()) {
-      addNotification('Validation Error', 'First name and last name are required.', 'warning');
+    const invalidSection = registrationSections.find((step) => !validateSection(step));
+    if (invalidSection) return;
+    if (!gender) return;
+    if (!hasCurrentConsent || !consentSignerName || (consentSignerRole === 'Legal guardian' && !consentSignerRelationship.trim())) {
+      addNotification('Registration Consent Required', 'Review the patient details on the Consent Form tab and confirm the signature and acknowledgment before saving.', 'warning');
+      setRegistrationView('consent');
       return;
     }
 
@@ -302,7 +422,6 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         'warning',
         duplicateName.id
       );
-      setActiveTab('contact');
       return;
     }
 
@@ -332,17 +451,35 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         age: calculatedAge,
         gender,
         bloodGroup,
-        maritalStatus,
+        maritalStatus: maritalStatus || undefined,
         photo,
-        phone,
-        email,
+        phone: phone.trim(),
+        email: email.trim(),
         emiratesId: nationalId,
         passportNo,
-        address: `${address}${city ? `, ${city}` : ''}`,
+        address: [address.trim(), city.trim()].filter(Boolean).join(', '),
+        nationality,
+        language,
+        religion,
+        visaCategory,
+        countryOfResidence,
+        area,
+        district,
+        occupation,
+        company,
+        referral: {
+          type: referralType,
+          referrerName: referrerName.trim() || undefined,
+        },
+        consentSigned,
+        consentTimestamp: consentSigned ? consentTimestamp : undefined,
+        consentSignature: consentSignerName,
+        consentSignerRole,
+        consentSignerRelationship,
         emergencyContact: {
-          name: emergencyName || 'Next of Kin',
-          relationship: emergencyRelation || 'Family',
-          phone: emergencyPhone || phone,
+          name: emergencyName.trim(),
+          relationship: emergencyRelation.trim(),
+          phone: emergencyPhone.trim(),
         },
         status,
         department,
@@ -353,17 +490,28 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         allergies: parsedAllergies,
         chronicConditions: parsedChronic,
         insurance: {
-          provider: insuranceProvider,
-          policyNumber,
-          tpa,
-          memberId,
-          dhaMemberId,
-          clientNumber,
-          groupNumber: 'GRP-2026',
-          validUntil: '2027-12-31',
-          copayPercentage: copayPercent,
-          status: 'Active',
-          verifiedAt: new Date().toISOString(),
+          provider: payMode === 'Self' ? 'Self-Pay' : insuranceProvider.trim(),
+          policyNumber: payMode === 'Self' ? '' : policyNumber.trim(),
+          tpa: payMode === 'Self' ? undefined : tpa.trim() || undefined,
+          regulator: payMode === 'Self' ? undefined : insuranceRegulator || undefined,
+          network: payMode === 'Self' ? undefined : insuranceNetwork.trim() || undefined,
+          planName: payMode === 'Self' ? undefined : insurancePlanName.trim() || undefined,
+          cardNumber: payMode === 'Self' ? undefined : insuranceCardNumber.trim() || undefined,
+          certificateNumber: payMode === 'Self' ? undefined : certificateNumber.trim() || undefined,
+          dependentNumber: payMode === 'Self' ? undefined : dependentNumber.trim() || undefined,
+          claimFormNo: payMode === 'Self' ? undefined : claimFormNo.trim() || undefined,
+          requiresPreAuthorization: payMode === 'Self' ? undefined : requiresPreAuthorization,
+          preExistingWaitingPeriod: payMode === 'Self' ? undefined : preExistingWaitingPeriod.trim() || undefined,
+          verificationReference: payMode === 'Self' ? undefined : verificationReference.trim() || undefined,
+          dailyClinicLimitAed: payMode === 'Self' || Number(dailyClinicLimitAed) <= 0 ? undefined : Number(dailyClinicLimitAed),
+          memberId: payMode === 'Self' ? undefined : memberId.trim() || undefined,
+          dhaMemberId: payMode === 'Self' ? undefined : dhaMemberId.trim() || undefined,
+          clientNumber: payMode === 'Self' ? undefined : clientNumber.trim() || undefined,
+          groupNumber: payMode === 'Self' ? '' : groupNumber.trim(),
+          coveragePercentage: payMode === 'Self' ? 0 : Math.max(0, 100 - copayPercent),
+          copayAmount: 0,
+          expiryDate: insuranceExpiryDate,
+          status: 'Pending',
           serviceCopay: {
             consultation: serviceCopay.consultation ?? 20,
             dental: serviceCopay.dental ?? 20,
@@ -377,6 +525,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
             emergency: serviceCopay.emergency ?? 10,
           },
         },
+        payMode,
         insuranceCardImage: insuranceCardImage || undefined,
         supportDocumentImage: supportDocumentImage || undefined,
       });
@@ -396,7 +545,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     }
 
     // Register new patient
-    const newPatient = addPatient({
+    const { patient: newPatient, token: registrationToken } = addPatient({
       title,
       firstName: firstName.trim(),
       middleName: middleName.trim(),
@@ -405,38 +554,67 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
       age: calculatedAge,
       gender,
       bloodGroup,
-      maritalStatus,
+      maritalStatus: maritalStatus || undefined,
       photo,
-      phone: phone || '+1 (555) 234-5678',
-      email: email || `${firstName.toLowerCase()}.${lastName.toLowerCase()}@hospital.org`,
-      address: address ? `${address}, ${city}` : '100 Medical Center Way, Metro City',
+      phone: phone.trim(),
+      email: email.trim(),
+      address: [address.trim(), city.trim()].filter(Boolean).join(', '),
+      nationality,
+      language,
+      religion,
+      visaCategory,
+      countryOfResidence,
+      area,
+      district,
+      occupation,
+      company,
+      referral: {
+      type: referralType,
+      referrerName: referrerName.trim() || undefined,
+      },
+      consentSigned,
+      consentTimestamp: consentSigned ? consentTimestamp : undefined,
+      consentSignature: consentSignerName,
+      consentSignerRole,
+      consentSignerRelationship,
       emiratesId: nationalId,
       passportNo,
       emergencyContact: {
-        name: emergencyName || 'Next of Kin',
-        relationship: emergencyRelation || 'Family',
-        phone: emergencyPhone || phone || '+1 (555) 999-0000',
+        name: emergencyName.trim(),
+        relationship: emergencyRelation.trim(),
+        phone: emergencyPhone.trim(),
       },
       status,
       department,
       primaryPhysicianId: assignedDoctor?.id || 'DOC-01',
       primaryPhysicianName: assignedDoctor?.name || 'Attending Physician',
-      wardOrRoom: status === 'Outpatient' ? undefined : wardOrRoom || (status === 'Inpatient' ? 'Ward A - Room 102' : undefined),
-      purposeOfVisit: chiefComplaint || 'Admission & Clinical Examination',
+      wardOrRoom: status === 'Outpatient' ? undefined : wardOrRoom || undefined,
+      purposeOfVisit: chiefComplaint.trim(),
       allergies: parsedAllergies,
       chronicConditions: parsedChronic,
       insurance: {
-        provider: payMode === 'Self' ? 'Self-Pay' : insuranceProvider,
-        policyNumber: payMode === 'Self' ? 'CASH-PATIENT' : policyNumber,
-        tpa: payMode === 'Self' ? undefined : tpa,
-        memberId: payMode === 'Self' ? undefined : memberId,
-        dhaMemberId: payMode === 'Self' ? undefined : dhaMemberId,
-        clientNumber: payMode === 'Self' ? undefined : clientNumber,
-        groupNumber: 'GRP-2026',
-        validUntil: '2027-12-31',
-        copayPercentage: payMode === 'Self' ? 100 : copayPercent,
-        status: 'Active',
-        verifiedAt: new Date().toISOString(),
+        provider: payMode === 'Self' ? 'Self-Pay' : insuranceProvider.trim(),
+        policyNumber: payMode === 'Self' ? '' : policyNumber.trim(),
+        tpa: payMode === 'Self' ? undefined : tpa.trim() || undefined,
+        regulator: payMode === 'Self' ? undefined : insuranceRegulator || undefined,
+        network: payMode === 'Self' ? undefined : insuranceNetwork.trim() || undefined,
+        planName: payMode === 'Self' ? undefined : insurancePlanName.trim() || undefined,
+        cardNumber: payMode === 'Self' ? undefined : insuranceCardNumber.trim() || undefined,
+        certificateNumber: payMode === 'Self' ? undefined : certificateNumber.trim() || undefined,
+        dependentNumber: payMode === 'Self' ? undefined : dependentNumber.trim() || undefined,
+        claimFormNo: payMode === 'Self' ? undefined : claimFormNo.trim() || undefined,
+        requiresPreAuthorization: payMode === 'Self' ? undefined : requiresPreAuthorization,
+        preExistingWaitingPeriod: payMode === 'Self' ? undefined : preExistingWaitingPeriod.trim() || undefined,
+        verificationReference: payMode === 'Self' ? undefined : verificationReference.trim() || undefined,
+        dailyClinicLimitAed: payMode === 'Self' || Number(dailyClinicLimitAed) <= 0 ? undefined : Number(dailyClinicLimitAed),
+        memberId: payMode === 'Self' ? undefined : memberId.trim() || undefined,
+        dhaMemberId: payMode === 'Self' ? undefined : dhaMemberId.trim() || undefined,
+        clientNumber: payMode === 'Self' ? undefined : clientNumber.trim() || undefined,
+        groupNumber: payMode === 'Self' ? '' : groupNumber.trim(),
+        coveragePercentage: payMode === 'Self' ? 0 : Math.max(0, 100 - copayPercent),
+        copayAmount: 0,
+        expiryDate: insuranceExpiryDate,
+        status: 'Pending',
         serviceCopay: {
           consultation: serviceCopay.consultation ?? 20,
           dental: serviceCopay.dental ?? 20,
@@ -454,6 +632,9 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
       supportDocumentImage: supportDocumentImage || undefined,
       payMode: payMode === 'Discount Card' ? 'Discount Card' : payMode,
     }, registrationType);
+    if (!printReceptionToken(registrationToken)) {
+      addNotification('Print Window Blocked', `Patient registered with reception token ${registrationToken.tokenNumber}. Allow pop-ups to print the token slip.`, 'warning', newPatient.id);
+    }
 
     const paymentScheme: {
       schemeType: PaymentSchemeType;
@@ -521,115 +702,11 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     patient: `${title} ${firstName} ${middleName ? `${middleName} ` : ''}${lastName}`.trim(),
     phone: phone || 'Not provided',
     dob: dob || 'Not provided',
-    department: department || 'General Medicine',
     doctor: doctors.find((d) => d.id === doctorId)?.name || 'To be assigned',
-    payment: payMode === 'Self' ? 'Self-Pay' : payMode === 'Discount Card' ? 'Discount Card' : 'Insurance / TPA',
     visit: chiefComplaint || 'Not specified',
-    insurance: payMode === 'Insurance' ? insuranceProvider : payMode === 'Discount Card' ? discountCardName : 'Self-pay patient',
   };
 
   const availableBeds = wardBeds.filter((b) => b.status === 'Available');
-  const serviceRates = { consultation: 150, laboratory: 120, radiology: 250, pharmacy: 80, procedures: 500, emergency: 300 };
-  const estimatedTotal = Object.values(serviceRates).reduce((total, amount) => total + amount, 0);
-  const averageCopay = Object.values(serviceCopay).reduce((total, percent) => total + percent, 0) / Object.values(serviceCopay).length;
-  const estimatedPatientPayable = payMode === 'Self'
-    ? estimatedTotal
-    : payMode === 'Discount Card'
-    ? Math.round(estimatedTotal * (1 - discountPercent / 100))
-    : Math.round(estimatedTotal * (averageCopay / 100));
-
-  const InsuranceColumnPanel = () => (
-    <aside className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-3">
-      <div className="flex items-center gap-2 text-slate-800 font-semibold text-xs">
-        <ShieldCheck className="w-4 h-4 text-emerald-600" /> Insurance column
-      </div>
-      <div className="space-y-2 text-[11px] text-slate-700">
-        <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">Payment mode</div>
-          <div className="mt-1 font-semibold text-slate-900">{payMode}</div>
-        </div>
-        <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">Provider</div>
-          <div className="mt-1 font-semibold text-slate-900">{payMode === 'Insurance' ? insuranceProvider : payMode === 'Discount Card' ? discountCardName : 'Self-pay patient'}</div>
-        </div>
-        <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">Policy / card</div>
-          <div className="mt-1 font-semibold text-slate-900">{payMode === 'Insurance' ? policyNumber : payMode === 'Discount Card' ? 'Discount card active' : 'Cash / direct payment'}</div>
-        </div>
-        <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">{payMode === 'Insurance' ? 'Co-pay' : payMode === 'Discount Card' ? 'Discount %' : 'Applicable'}</div>
-          <div className="mt-1 font-semibold text-slate-900">
-            {payMode === 'Insurance' ? `${Math.round(averageCopay)}%` : payMode === 'Discount Card' ? `${discountPercent}%` : 'N/A (self-pay)'}
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
-
-  const RegistrationSummarySidebar = () => (
-    <aside className="space-y-4">
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-        <div className="flex items-center gap-2 text-slate-800 font-semibold text-xs">
-          <ShieldCheck className="w-4 h-4 text-emerald-600" /> Registration snapshot
-        </div>
-        <div className="space-y-2 text-[11px] text-slate-700">
-          <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Patient</div>
-            <div className="mt-1 font-semibold text-slate-900">{finalSummary.patient}</div>
-          </div>
-          <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Department</div>
-            <div className="mt-1 font-semibold text-slate-900">{finalSummary.department}</div>
-          </div>
-          <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Doctor</div>
-            <div className="mt-1 font-semibold text-slate-900">{finalSummary.doctor}</div>
-          </div>
-          <div className="rounded-lg bg-white border border-slate-200 p-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Payment</div>
-            <div className="mt-1 font-semibold text-slate-900">{finalSummary.payment}</div>
-          </div>
-        </div>
-      </div>
-
-      {duplicateMatches.length > 0 && (
-        <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 text-amber-900">
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <AlertCircle className="w-4 h-4 text-amber-600" /> Possible duplicate record
-          </div>
-          <ul className="mt-2 space-y-1 text-[11px]">
-            {duplicateMatches.map((item) => (
-              <li key={item.id}>
-                {item.firstName} {item.lastName} — {item.phone || item.emiratesId || item.passportNo || 'similar ID'}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="p-4 bg-blue-50/60 rounded-lg border border-blue-200 space-y-3">
-        <div className="flex items-center gap-2 text-blue-900 font-semibold text-xs">
-          <FileText className="w-4 h-4 text-blue-600" /> Quick view
-        </div>
-        <div className="space-y-2 text-[11px]">
-          <div><span className="block text-[10px] text-slate-500">Contact</span><strong className="text-slate-900">{finalSummary.phone}</strong></div>
-          <div><span className="block text-[10px] text-slate-500">DOB</span><strong className="text-slate-900">{finalSummary.dob}</strong></div>
-          <div><span className="block text-[10px] text-slate-500">Chief Complaint</span><strong className="text-slate-900">{finalSummary.visit}</strong></div>
-        </div>
-      </div>
-
-      <div className="p-4 bg-blue-50/60 rounded-lg border border-blue-200 space-y-3">
-        <div className="flex items-center gap-2 text-blue-900 font-semibold text-xs">
-          <FileText className="w-4 h-4 text-blue-600" /> Financial summary
-        </div>
-        <div className="space-y-2 text-[11px]">
-          <div><span className="block text-[10px] text-slate-500">Estimated services</span><strong className="text-slate-900">${estimatedTotal}</strong></div>
-          <div><span className="block text-[10px] text-slate-500">Average co-pay</span><strong className="text-slate-900">{Math.round(averageCopay)}%</strong></div>
-          <div><span className="block text-[10px] text-slate-500">Patient payable</span><strong className="text-amber-700">${estimatedPatientPayable}</strong></div>
-        </div>
-      </div>
-    </aside>
-  );
 
   return (
     <div
@@ -638,7 +715,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
     >
-      <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -647,11 +724,9 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
             </div>
             <div>
               <h2 className="font-semibold text-base text-white">
-                {initialPatientId ? 'Update Patient Record' : 'Patient Admission & EMR Registration'}
+                {initialPatientId ? 'Update Patient Record' : 'Patient Registration & Intake'}
               </h2>
-              <p className="text-xs text-slate-400">
-                MedCore Clinical Information System — Intake & Master Patient Index
-              </p>
+              <p className="text-xs text-slate-400">Enter verified details only. Required fields are marked *.</p>
             </div>
           </div>
           <button
@@ -663,63 +738,36 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 bg-slate-50 px-6 gap-2 text-xs font-medium pt-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab('demographics')}
-            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeTab === 'demographics'
-                ? 'border-blue-600 text-blue-600 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <User className="w-3.5 h-3.5" />
-            Patient Information
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('contact')}
-            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeTab === 'contact'
-                ? 'border-blue-600 text-blue-600 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Phone className="w-3.5 h-3.5" />
-            Contact
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('clinical')}
-            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeTab === 'clinical'
-                ? 'border-blue-600 text-blue-600 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Stethoscope className="w-3.5 h-3.5" />
-            Visit / Doctor
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('insurance')}
-            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeTab === 'insurance'
-                ? 'border-blue-600 text-blue-600 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CreditCard className="w-3.5 h-3.5" />
-            Insurance Details
-          </button>
-        </div>
-
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
-          {/* TAB 1: DEMOGRAPHICS */}
-          {activeTab === 'demographics' && (
-            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_0.8fr] gap-4">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+          <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 py-2 bg-white/95 backdrop-blur border-b border-slate-200 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setRegistrationView('registration')}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${registrationView === 'registration' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              aria-current={registrationView === 'registration' ? 'page' : undefined}
+            >
+              Patient Information & Registration
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationView('consent')}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold flex items-center gap-1.5 transition-colors ${registrationView === 'consent' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              aria-current={registrationView === 'consent' ? 'page' : undefined}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Registration Consent
+              {hasCurrentConsent && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" aria-label="Consent signed" />}
+            </button>
+          </div>
+
+          {registrationView === 'registration' ? (
+            <>
+          <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Patient Information</h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">Demographics and identifying details</p>
+            </div>
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-4 items-start p-3 rounded-lg border border-slate-200 bg-slate-50">
                 <div className="w-24 h-24 rounded-lg border border-slate-300 bg-white overflow-hidden flex items-center justify-center shrink-0">
@@ -750,6 +798,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                     onChange={(e) => setTitle(e.target.value)}
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   >
+                    <option value="">Select</option>
                     <option value="Mr.">Mr.</option>
                     <option value="Mrs.">Mrs.</option>
                     <option value="Ms.">Ms.</option>
@@ -797,12 +846,13 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-slate-700 block mb-1">Date of Birth</label>
+                  <label className="text-xs font-medium text-slate-700 block mb-1">Date of Birth <span className="text-red-500">*</span></label>
                   <div className="relative">
                     <input
                       type="date"
                       value={dob}
                       onChange={(e) => setDob(e.target.value)}
+                      required
                       max={new Date().toISOString().split('T')[0]}
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                     />
@@ -811,16 +861,17 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                 <div>
                   <label className="text-xs font-medium text-slate-700 block mb-1">Calculated Age</label>
                   <div className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs text-slate-700 font-semibold">
-                    {calculatedAge} years old
+                    {dob ? `${calculatedAge} years old` : 'Enter DOB to calculate'}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-slate-700 block mb-1">Gender</label>
+                  <label className="text-xs font-medium text-slate-700 block mb-1">Gender <span className="text-red-500">*</span></label>
                   <select
                     value={gender}
-                    onChange={(e) => setGender(e.target.value as any)}
+                    onChange={(e) => setGender(e.target.value as Patient['gender'] | '')}
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   >
+                    <option value="">Select gender</option>
                     <option value="Male">Male</option>
                     <option value="Female">Female</option>
                     <option value="Other">Other</option>
@@ -830,12 +881,13 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-slate-700 block mb-1">Blood Group</label>
+                  <label className="text-xs font-medium text-slate-700 block mb-1">Blood Group <span className="font-normal text-slate-400">(if known)</span></label>
                   <select
                     value={bloodGroup}
                     onChange={(e) => setBloodGroup(e.target.value as BloodGroup)}
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   >
+                    <option value="Unknown">Unknown / not recorded</option>
                     <option value="A+">A Positive (A+)</option>
                     <option value="A-">A Negative (A-)</option>
                     <option value="B+">B Positive (B+)</option>
@@ -850,9 +902,10 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                   <label className="text-xs font-medium text-slate-700 block mb-1">Marital Status</label>
                   <select
                     value={maritalStatus}
-                    onChange={(e) => setMaritalStatus(e.target.value as any)}
+                    onChange={(e) => setMaritalStatus(e.target.value as Patient['maritalStatus'] | '')}
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   >
+                    <option value="">Not specified</option>
                     <option value="Single">Single</option>
                     <option value="Married">Married</option>
                     <option value="Divorced">Divorced</option>
@@ -861,16 +914,13 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                 </div>
                 </div>
               </div>
-              <div className="space-y-4">
-                <InsuranceColumnPanel />
-                <RegistrationSummarySidebar />
-              </div>
-            </div>
-          )}
+          </div>
 
-          {/* TAB 2: CONTACT & IDENTIFICATION */}
-          {activeTab === 'contact' && (
-            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_0.8fr] gap-4">
+          <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Contact & Identification</h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">How to reach the patient and verify identity</p>
+            </div>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -912,15 +962,8 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                       placeholder="784-1990-1234567-1"
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                     />
-                    <button
-                      type="button"
-                      onClick={handleNationalIdCardRead}
-                      disabled={isReadingCard}
-                      className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-[10px] font-bold hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      {isReadingCard ? 'Reading...' : 'Read ID'}
-                    </button>
                   </div>
+                  <p className="mt-1 text-[10px] text-slate-500">Enter the ID exactly as shown on the patient’s document.</p>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-700 block mb-1">Passport Number</label>
@@ -951,9 +994,77 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                     type="text"
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    placeholder="Metropolis"
+                    list="patient-city-options"
+                    placeholder="Select or enter city / region"
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 space-y-3">
+                <h4 className="text-xs font-semibold text-slate-800">Geographical & personal details <span className="font-normal text-slate-500">(optional; choose a suggestion or enter another value)</span></h4>
+                <datalist id="patient-city-options">{registrationSuggestions.cities.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-nationality-options">{registrationSuggestions.nationalities.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-country-options">{registrationSuggestions.countries.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-language-options">{registrationSuggestions.languages.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-area-options">{registrationSuggestions.areas.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-district-options">{registrationSuggestions.districts.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-visa-options">{registrationSuggestions.visaCategories.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-occupation-options">{registrationSuggestions.occupations.map((value) => <option key={value} value={value} />)}</datalist>
+                <datalist id="patient-religion-options">{registrationSuggestions.religions.map((value) => <option key={value} value={value} />)}</datalist>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Nationality</label>
+                    <input list="patient-nationality-options" autoComplete="country-name" value={nationality} onChange={(e) => setNationality(e.target.value)} placeholder="Select or enter nationality" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Country of Residence</label>
+                    <input list="patient-country-options" autoComplete="country-name" value={countryOfResidence} onChange={(e) => setCountryOfResidence(e.target.value)} placeholder="Select or enter country" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Preferred Language</label>
+                    <input list="patient-language-options" value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="Select or enter language" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Area / Neighborhood</label>
+                    <input list="patient-area-options" value={area} onChange={(e) => setArea(e.target.value)} placeholder="Select or enter area" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">District</label>
+                    <input list="patient-district-options" value={district} onChange={(e) => setDistrict(e.target.value)} placeholder="Select or enter district" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Visa Category</label>
+                    <input list="patient-visa-options" value={visaCategory} onChange={(e) => setVisaCategory(e.target.value)} placeholder="Select or enter visa category" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Occupation</label>
+                    <input list="patient-occupation-options" value={occupation} onChange={(e) => setOccupation(e.target.value)} placeholder="Select or enter occupation" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Employer / Company</label>
+                    <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Employer or company" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Religion <span className="font-normal text-slate-400">(if relevant)</span></label>
+                    <input list="patient-religion-options" value={religion} onChange={(e) => setReligion(e.target.value)} placeholder="Select or enter religion" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Referral Source</label>
+                    <select value={referralType} onChange={(e) => setReferralType(e.target.value as NonNullable<Patient['referral']>['type'])} className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden">
+                      <option value="Walk-In">Walk-in</option>
+                      <option value="Internal">Internal referral</option>
+                      <option value="External Center">External center</option>
+                      <option value="Corporate">Corporate</option>
+                      <option value="Online Booking">Online booking</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600 block mb-1">Referrer / Organization</label>
+                    <input value={referrerName} onChange={(e) => setReferrerName(e.target.value)} placeholder="Name or organization (if applicable)" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                  </div>
                 </div>
               </div>
 
@@ -993,16 +1104,13 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                 </div>
                 </div>
               </div>
-              <div className="space-y-4">
-                <InsuranceColumnPanel />
-                <RegistrationSummarySidebar />
-              </div>
-            </div>
-          )}
+          </div>
 
-          {/* TAB 3: CLINICAL & ADMISSION */}
-          {activeTab === 'clinical' && (
-            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_0.8fr] gap-4">
+          <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Visit & Clinical Intake</h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">Visit type, care team, admission and relevant medical history</p>
+            </div>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1015,7 +1123,6 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                     <option value="Outpatient">Outpatient (OPD Walk-in / Scheduled)</option>
                     <option value="Inpatient">Inpatient (Ward Admission)</option>
                     <option value="Emergency">Emergency (Immediate ER / STAT)</option>
-                    <option value="Observation">Observation (Day-Care / Clinical Stay)</option>
                   </select>
                 </div>
                 <div>
@@ -1123,16 +1230,13 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                 </div>
                 </div>
               </div>
-              <div className="space-y-4">
-                <InsuranceColumnPanel />
-                <RegistrationSummarySidebar />
-              </div>
-            </div>
-          )}
+          </div>
 
-          {/* TAB 4: INSURANCE & BILLING */}
-          {activeTab === 'insurance' && (
-            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_0.8fr] gap-4">
+          <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Registration & Payment</h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">Choose the correct service queue and billing arrangement</p>
+            </div>
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-medium text-slate-700 block mb-1">Registration Queue Type</label>
@@ -1207,16 +1311,23 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                   <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                     <div className="flex items-center gap-2 text-slate-800 font-medium text-xs">
                       <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                      Insurance Policy Verification Details
+                      UAE Insurance Policy & Eligibility Details
                     </div>
+                    <p className="text-[10px] text-slate-500">
+                      Record the card and payer details as printed. Eligibility must still be confirmed with the insurer/TPA portal; saving this form does not verify coverage.
+                    </p>
+                    <datalist id="uae-insurance-payers">{uaeInsuranceSuggestions.payers.map((value) => <option key={value} value={value} />)}</datalist>
+                    <datalist id="uae-insurance-tpas">{uaeInsuranceSuggestions.tpas.map((value) => <option key={value} value={value} />)}</datalist>
+                    <datalist id="uae-insurance-networks">{uaeInsuranceSuggestions.networks.map((value) => <option key={value} value={value} />)}</datalist>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Insurance Company / TPA</label>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Insurance Company / Payer</label>
                         <input
                           type="text"
+                          list="uae-insurance-payers"
                           value={insuranceProvider}
                           onChange={(e) => setInsuranceProvider(e.target.value)}
-                          placeholder="e.g. Aetna, Blue Cross, Cigna, Daman"
+                          placeholder="e.g. Daman, Sukoon, ADNIC"
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
                       </div>
@@ -1224,11 +1335,38 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                         <label className="text-[11px] font-medium text-slate-600 block mb-1">TPA</label>
                         <input
                           type="text"
+                          list="uae-insurance-tpas"
                           value={tpa}
                           onChange={(e) => setTpa(e.target.value)}
-                          placeholder="e.g. TPA 8"
+                          placeholder="e.g. NAS, NextCare, MedNet"
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">UAE Regulator / Emirate</label>
+                        <select
+                          value={insuranceRegulator}
+                          onChange={(e) => setInsuranceRegulator(e.target.value as typeof insuranceRegulator)}
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        >
+                          <option value="">Select if applicable</option>
+                          <option value="DHA">DHA — Dubai</option>
+                          <option value="DOH">DOH — Abu Dhabi</option>
+                          <option value="MOHAP">MOHAP — Northern Emirates</option>
+                          <option value="Other">Other / not specified</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Network</label>
+                        <input type="text" list="uae-insurance-networks" value={insuranceNetwork} onChange={(e) => setInsuranceNetwork(e.target.value)} placeholder="Network printed on card" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Plan Name / Category</label>
+                        <input type="text" value={insurancePlanName} onChange={(e) => setInsurancePlanName(e.target.value)} placeholder="Plan / EBP / Thiqa category" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Insurance Card Number</label>
+                        <input type="text" value={insuranceCardNumber} onChange={(e) => setInsuranceCardNumber(e.target.value)} placeholder="Number printed on insurance card" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
                       </div>
                       <div>
                         <label className="text-[11px] font-medium text-slate-600 block mb-1">Member ID</label>
@@ -1271,6 +1409,25 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                         />
                       </div>
                       <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Group Number</label>
+                        <input
+                          type="text"
+                          value={groupNumber}
+                          onChange={(e) => setGroupNumber(e.target.value)}
+                          placeholder="Enter group number"
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Coverage Expiry Date</label>
+                        <input
+                          type="date"
+                          value={insuranceExpiryDate}
+                          onChange={(e) => setInsuranceExpiryDate(e.target.value)}
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                      </div>
+                      <div>
                         <label className="text-[11px] font-medium text-slate-600 block mb-1">Client Number</label>
                         <input
                           type="text"
@@ -1279,6 +1436,26 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                           placeholder="e.g. INS137"
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Certificate Number</label>
+                        <input type="text" value={certificateNumber} onChange={(e) => setCertificateNumber(e.target.value)} placeholder="Certificate / policy certificate" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Dependent Number</label>
+                        <input type="text" value={dependentNumber} onChange={(e) => setDependentNumber(e.target.value)} placeholder="Dependent / family member no." className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Claim Form / Reference No.</label>
+                        <input type="text" value={claimFormNo} onChange={(e) => setClaimFormNo(e.target.value)} placeholder="Optional claim reference" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Eligibility Verification Reference</label>
+                        <input type="text" value={verificationReference} onChange={(e) => setVerificationReference(e.target.value)} placeholder="Portal / call reference, if verified" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Pre-existing Condition Waiting Period</label>
+                        <input type="text" value={preExistingWaitingPeriod} onChange={(e) => setPreExistingWaitingPeriod(e.target.value)} placeholder="As stated by insurer / policy" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
                       </div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1289,18 +1466,24 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                           min={0}
                           max={100}
                           value={copayPercent}
-                          onChange={(e) => setCopayPercent(Number(e.target.value))}
+                          onChange={(e) => setCopayPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
                       </div>
-                      <div>
-                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Pre-Authorization Status</label>
-                        <div className="flex items-center gap-1.5 py-2 text-xs text-emerald-700 font-medium">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          Eligible for Automated Electronic eClaims
-                        </div>
+                      <div className="flex items-center gap-1.5 py-2 text-[11px] text-amber-800 font-medium">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        Verify eligibility and authorization with the payer before treatment.
                       </div>
                     </div>
+                    <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2 text-[11px] text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={requiresPreAuthorization}
+                        onChange={(event) => setRequiresPreAuthorization(event.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                      />
+                      Policy/service requires pre-authorization (confirm per benefit and payer)
+                    </label>
                   </div>
                 ) : payMode === 'Discount Card' ? (
                   <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
@@ -1326,7 +1509,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                           min={0}
                           max={100}
                           value={discountPercent}
-                          onChange={(e) => setDiscountPercent(Number(e.target.value))}
+                          onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
                       </div>
@@ -1347,7 +1530,21 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                 {payMode === 'Insurance' && (
                   <div className="p-4 bg-white rounded-lg border border-slate-200 space-y-3">
                     <div className="flex items-center gap-2 text-slate-800 font-semibold text-xs"><CreditCard className="w-4 h-4 text-blue-600" /> Co-Pay Configuration</div>
-                    <p className="text-[10px] text-slate-500">Insurance co-pay applies only when the patient is under insurance coverage.</p>
+                    <p className="text-[10px] text-slate-500">Configure service co-pays and, when applicable, a per-patient daily maximum for insurer-covered charges. Cashier enforcement remains optional at each visit.</p>
+                    <div className="max-w-sm">
+                      <label htmlFor="daily-clinic-insurance-limit" className="text-[11px] font-medium text-slate-600 block mb-1">Patient Daily Clinic Insurance Limit (AED)</label>
+                      <input
+                        id="daily-clinic-insurance-limit"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={dailyClinicLimitAed}
+                        onChange={(event) => setDailyClinicLimitAed(event.target.value)}
+                        placeholder="Leave blank if no daily limit applies"
+                        className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                      />
+                      <p className="mt-1 text-[10px] text-slate-500">The cap applies to the insurer-covered amount accumulated for this patient on the visit date, not the patient co-pay.</p>
+                    </div>
 
                     <div className="overflow-x-auto">
                       <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden text-[10px]">
@@ -1528,7 +1725,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                     </div>
                     <div className="rounded-lg bg-white border border-slate-200 p-2.5">
                       <div className="text-[10px] uppercase tracking-wide text-slate-500">Co-Pay</div>
-                      <div className="mt-1 font-semibold text-slate-900">{Math.round(averageCopay)}%</div>
+                      <div className="mt-1 font-semibold text-slate-900">{copayPercent}% — pending verification</div>
                     </div>
                   </div>
                 </div>
@@ -1556,20 +1753,11 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                   </div>
                 </div>
 
-                <div className="p-4 bg-blue-50/60 rounded-lg border border-blue-200 space-y-3">
-                  <div className="flex items-center gap-2 text-blue-900 font-semibold text-xs"><FileText className="w-4 h-4 text-blue-600" /> Financial Summary</div>
-                  <div className="space-y-2 text-[11px]">
-                    <div><span className="block text-[10px] text-slate-500">Estimated Services</span><strong className="text-slate-900">${estimatedTotal}</strong></div>
-                    <div><span className="block text-[10px] text-slate-500">Average Co-Pay</span><strong className="text-slate-900">{Math.round(averageCopay)}%</strong></div>
-                    <div><span className="block text-[10px] text-slate-500">Patient Payable</span><strong className="text-amber-700">${estimatedPatientPayable}</strong></div>
-                  </div>
-                </div>
               </aside>
             </div>
-          )}
 
           {/* Footer Controls */}
-          <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+          <div className="sticky bottom-0 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center justify-between">
             <button
               type="button"
               onClick={clearForm}
@@ -1579,28 +1767,147 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
               Clear
             </button>
             <div className="flex items-center gap-2">
-              {activeTab !== 'insurance' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activeTab === 'demographics') setActiveTab('contact');
-                    else if (activeTab === 'contact') setActiveTab('clinical');
-                    else if (activeTab === 'clinical') setActiveTab('insurance');
-                  }}
-                  className="px-4 py-2 text-xs font-medium bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-                >
-                  Next Step
-                </button>
-              ) : null}
               <button
                 type="submit"
                 className="px-5 py-2 text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                {initialPatientId ? 'Save Changes' : 'Complete Admission'}
+                {initialPatientId ? 'Save Changes' : 'Register Patient'}
               </button>
             </div>
           </div>
+            </>
+          ) : (
+            <section className="mx-auto max-w-3xl space-y-5 rounded-xl border border-slate-200 p-5 sm:p-7" aria-labelledby="registration-consent-heading">
+              <div>
+                <div className="flex items-center gap-2 text-blue-700">
+                  <FileText className="h-5 w-5" />
+                  <span className="text-xs font-bold uppercase tracking-wide">Patient registration</span>
+                </div>
+                <h3 id="registration-consent-heading" className="mt-2 text-xl font-bold text-slate-900">Registration & Privacy Consent</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Please review this consent with the patient or their legal representative before signing.
+                </p>
+              </div>
+
+              <div className="space-y-3 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                <p>
+                  I confirm that the information provided for patient registration is accurate to the best of my knowledge. I authorize the hospital to create and maintain a patient record and to use the information provided for registration, appointment coordination, billing, and related healthcare administration.
+                </p>
+                <p>
+                  I understand that my information will be handled under the hospital’s applicable privacy practices and that I may ask staff how my information is used or request correction of inaccurate registration details.
+                </p>
+                <p className="font-semibold text-slate-800">
+                  This registration consent does not replace separate consent required for examination, treatment, procedures, or release of medical information.
+                </p>
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+                <h4 className="text-xs font-bold uppercase tracking-wide text-blue-900">Patient details for consent</h4>
+                <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                  <div><dt className="text-xs text-slate-500">Patient name</dt><dd className="font-semibold text-slate-900">{consentPatientName || 'Complete patient name in registration'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Date of birth</dt><dd className="font-semibold text-slate-900">{dob || 'Not entered'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Gender</dt><dd className="font-semibold text-slate-900">{gender || 'Not entered'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Phone</dt><dd className="font-semibold text-slate-900">{phone.trim() || 'Not entered'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">National ID / Emirates ID</dt><dd className="font-semibold text-slate-900">{nationalId.trim() || 'Not entered'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Passport number</dt><dd className="font-semibold text-slate-900">{passportNo.trim() || 'Not entered'}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-slate-500">Address</dt><dd className="font-semibold text-slate-900">{consentAddress || 'Not entered'}</dd></div>
+                  {initialPatientId && <div className="sm:col-span-2"><dt className="text-xs text-slate-500">Patient record number</dt><dd className="font-semibold text-slate-900">{initialPatientId}</dd></div>}
+                </dl>
+                <p className="text-[11px] text-blue-800">These values are linked to the registration form and update automatically when patient details change.</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="consent-signer-role" className="mb-1 block text-xs font-semibold text-slate-700">Signing as</label>
+                  <select
+                    id="consent-signer-role"
+                    value={consentSignerRole}
+                    onChange={(event) => {
+                      setConsentSignerRole(event.target.value as NonNullable<Patient['consentSignerRole']>);
+                      setConsentSignerRelationship('');
+                      setConsentSigned(false);
+                      setConsentTimestamp('');
+                      setConsentDetailsAtSigning('');
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="Patient">Patient</option>
+                    <option value="Legal guardian">Parent / legal guardian</option>
+                  </select>
+                </div>
+                {consentSignerRole === 'Legal guardian' && (
+                  <div>
+                    <label htmlFor="consent-relationship" className="mb-1 block text-xs font-semibold text-slate-700">Relationship to patient <span className="text-red-500">*</span></label>
+                    <input
+                      id="consent-relationship"
+                      value={consentSignerRelationship}
+                      onChange={(event) => {
+                        setConsentSignerRelationship(event.target.value);
+                        setConsentSigned(false);
+                        setConsentTimestamp('');
+                        setConsentDetailsAtSigning('');
+                      }}
+                      placeholder="e.g. Mother, Father, Legal guardian"
+                      required
+                      className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="consent-signature" className="mb-1 block text-xs font-semibold text-slate-700">
+                  {consentSignerRole === 'Patient' ? 'Patient’s full legal name (electronic signature)' : 'Guardian’s full legal name (electronic signature)'}
+                  <span className="text-red-500"> *</span>
+                </label>
+                <input
+                  id="consent-signature"
+                  type="text"
+                  value={consentSignerRole === 'Patient' ? consentPatientName : consentSignature}
+                  onChange={(event) => {
+                    setConsentSignature(event.target.value);
+                    setConsentSigned(false);
+                    setConsentTimestamp('');
+                    setConsentDetailsAtSigning('');
+                  }}
+                  autoComplete="name"
+                  placeholder={consentSignerRole === 'Patient' ? 'Enter patient name in registration' : 'Type guardian full legal name'}
+                  readOnly={consentSignerRole === 'Patient'}
+                  required
+                  className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-4 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={hasCurrentConsent}
+                  disabled={!consentSignerName || (consentSignerRole === 'Legal guardian' && !consentSignerRelationship.trim())}
+                  onChange={(event) => {
+                    setConsentSigned(event.target.checked);
+                    setConsentTimestamp(event.target.checked ? new Date().toISOString() : '');
+                    setConsentDetailsAtSigning(event.target.checked ? consentPatientDetails : '');
+                  }}
+                  className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+                />
+                <span>I have reviewed this registration consent and agree to it on behalf of the patient named in this record.</span>
+              </label>
+
+              <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <span className={`text-xs font-semibold ${hasCurrentConsent ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {hasCurrentConsent ? 'Consent signed and ready to save' : 'Review patient details, then sign and acknowledge'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRegistrationView('registration')}
+                  className="rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700"
+                >
+                  Return to registration
+                </button>
+              </div>
+            </section>
+          )}
         </form>
       </div>
     </div>

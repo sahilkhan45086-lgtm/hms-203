@@ -24,6 +24,7 @@ import { Patient, Prescription, ClinicalNote, PatientService, InsuranceApproval 
 import { ICD10_COMMON_CODES } from '../data/icd10Codes';
 import { PatientDashboard } from './PatientDashboard';
 import { PatientDiagnosticReportsView } from './reports/PatientDiagnosticReportsView';
+import { TokenWorkflowModal } from './tokens/TokenWorkflowModal';
 
 interface PatientsEMRProps {
   onOpenTriageModal: (patientId: string) => void;
@@ -54,6 +55,8 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [patientViewTab, setPatientViewTab] = useState<'dashboard' | 'previous' | 'notes' | 'prescriptions' | 'services' | 'reports' | 'advances' | 'all'>('dashboard');
+  const [doctorWorkflowTokenId, setDoctorWorkflowTokenId] = useState<string | null>(null);
+  const [selectedEncounterTokenId, setSelectedEncounterTokenId] = useState<string | null>(null);
 
   // New Note Form State
   const [chiefComplaint, setChiefComplaint] = useState('');
@@ -77,10 +80,19 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
 
   const normalizeClinicianName = (name: string) =>
     name.toLowerCase().replace(/^dr\.?\s*/, '').replace(/,?\s*(md|facs|do|phd)\b/g, '').replace(/[.,]/g, '').trim();
-  const assignedPatients = currentRole === 'doctor'
-    ? patients.filter(
-        (patient) => normalizeClinicianName(patient.primaryPhysicianName) === normalizeClinicianName(currentUser.name)
+  const isAssignedDoctorToken = (token: (typeof receptionTokens)[number]) =>
+    token.doctorId === currentUser.id ||
+    normalizeClinicianName(token.doctorName || '') === normalizeClinicianName(currentUser.name);
+  const doctorVisitTokens = currentRole === 'doctor'
+    ? receptionTokens.filter((token) => token.patientId !== 'WALK-IN' && isAssignedDoctorToken(token))
+      .sort((first, second) =>
+        (second.visitDate || second.createdDate || '').localeCompare(first.visitDate || first.createdDate || '') ||
+        second.createdTime.localeCompare(first.createdTime)
       )
+    : [];
+  const doctorPatientIds = new Set(doctorVisitTokens.map((token) => token.patientId));
+  const assignedPatients = currentRole === 'doctor'
+    ? patients.filter((patient) => doctorPatientIds.has(patient.id))
     : patients;
   const selectedPatient = assignedPatients.find((p) => p.id === selectedPatientId) || assignedPatients[0];
 
@@ -98,6 +110,12 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
   const patientVisits = [...(selectedPatient?.facilityVisits || [])].sort(
     (a, b) => new Date(b.visitDate).getTime() - new Date(a.visitDate).getTime()
   );
+  const patientEncounterTokens = receptionTokens
+    .filter((token) => token.patientId === selectedPatient?.id)
+    .sort((first, second) =>
+      (second.visitDate || second.createdDate || '').localeCompare(first.visitDate || first.createdDate || '') ||
+      second.createdTime.localeCompare(first.createdTime)
+    );
   const patientVitalsHistory = [...(selectedPatient?.vitals || [])].sort(
     (a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
   );
@@ -116,12 +134,18 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
           status: m.status,
         }))) || [];
   const patientServices = selectedPatient?.services || [];
-  const currentVisitToken = receptionTokens
+  const selectedEncounterToken = receptionTokens.find((token) =>
+    token.id === selectedEncounterTokenId &&
+    token.patientId === selectedPatient?.id &&
+    (currentRole !== 'doctor' || isAssignedDoctorToken(token))
+  );
+  const currentVisitToken = selectedEncounterToken || receptionTokens
     .filter((token) =>
       token.patientId === selectedPatient?.id &&
       token.status !== 'Completed' &&
       token.status !== 'Cancelled' &&
-      (token.visitDate || token.createdDate) === new Date().toISOString().slice(0, 10)
+      (token.visitDate || token.createdDate) === new Date().toISOString().slice(0, 10) &&
+      (currentRole !== 'doctor' || isAssignedDoctorToken(token))
     )
     .sort((first, second) => second.createdTime.localeCompare(first.createdTime))[0];
   const patientAdvancePayments = advancePayments
@@ -163,13 +187,14 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
       patientId: selectedPatient.id,
       authorName: currentUser.name || 'Dr. Julian Thorne, MD',
       authorRole: currentUser.role || 'Attending Physician',
+      encounterTokenId: currentVisitToken?.id,
       chiefComplaint,
       content: healthSummary,
       assessment: healthSummary,
       treatmentPlan,
       diagnosisCode: selectedIcd10.split(' ')[0],
       diagnoses: [selectedIcd10],
-      category: 'Physician Progress Note',
+      category: 'Medical Report',
     });
 
     setChiefComplaint('');
@@ -278,8 +303,8 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
     <div className="mx-auto max-w-[1500px] space-y-4 p-3 sm:p-4 lg:p-5">
       <header className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-[10px] font-bold uppercase text-teal-700">Clinical workspace</p>
-          <h2 className="text-lg font-bold text-slate-950">Patient records</h2>
+          <p className="text-[10px] font-bold uppercase text-teal-700">Doctor EMR · registered visits</p>
+          <h2 className="text-lg font-bold text-slate-950">My registered patient visits</h2>
         </div>
         <button
           type="button"
@@ -291,6 +316,44 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
           <span className="hidden sm:inline">Print chart</span>
         </button>
       </header>
+
+      <section className="overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-indigo-100 bg-indigo-50/70 p-3">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wide text-indigo-950">Visits assigned to {currentUser.name}</h3>
+            <p className="mt-0.5 text-[10px] text-indigo-800">Use the registration token to document diagnoses, health summary, services, and medical reports.</p>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-indigo-800">{doctorVisitTokens.length} tokens</span>
+        </div>
+        {doctorVisitTokens.length ? (
+          <div className="flex gap-2 overflow-x-auto p-3">
+            {doctorVisitTokens.map((token) => (
+              <article key={token.id} className="min-w-64 rounded-lg border border-slate-200 bg-white p-2.5">
+                <button type="button" onClick={() => { setSelectedPatientId(token.patientId); setSelectedEncounterTokenId(token.id); }} className="w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-teal-50 px-2 py-1 font-mono text-xs font-bold text-teal-800">{token.tokenNumber}</span>
+                    <span className="truncate text-xs font-bold text-slate-900">{token.patientName}</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-600">{token.visitDate || token.createdDate} · {token.department}</p>
+                  <p className="mt-0.5 text-[10px] text-slate-500">{token.status} · {token.currentStage?.replaceAll('_', ' ') || 'Registration'}</p>
+                </button>
+                <button type="button" onClick={() => { setSelectedPatientId(token.patientId); setSelectedEncounterTokenId(token.id); setDoctorWorkflowTokenId(token.id); }} className="mt-2 w-full rounded-md bg-indigo-700 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-indigo-800">
+                  Open Doctor EMR · {token.tokenNumber}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="p-4 text-xs text-slate-500">No patient registration tokens are assigned to you.</p>
+        )}
+      </section>
+
+      <TokenWorkflowModal
+        token={receptionTokens.find((token) => token.id === doctorWorkflowTokenId) || null}
+        isOpen={Boolean(doctorWorkflowTokenId)}
+        initialStage="3_DOCTOR_EMR"
+        onClose={() => setDoctorWorkflowTokenId(null)}
+      />
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
         {/* Left Column: Patient Registry List */}
@@ -882,11 +945,69 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                         {selectedPatient.firstName} {selectedPatient.lastName} · {selectedPatient.id}
                       </p>
                     </div>
-                    <span className="text-[11px] text-slate-500">{patientVisits.length} encounters · {patientNotes.length} clinical notes</span>
+                    <span className="text-[11px] text-slate-500">{patientVisits.length + patientEncounterTokens.length} encounters · {patientNotes.length} clinical notes</span>
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                     <div>
+                      <h4 className="mb-2 text-xs font-bold uppercase text-slate-700">Patient Visit Tokens</h4>
+                      {patientEncounterTokens.length === 0 ? (
+                        <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No registered visit tokens are recorded for this patient.</p>
+                      ) : (
+                        <div className="mb-4 max-h-[34rem] space-y-3 overflow-y-auto pr-1">
+                          {patientEncounterTokens.map((token) => (
+                            <article key={token.id} className="rounded-lg border border-blue-200 bg-blue-50/30 p-3 text-xs">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <h5 className="font-bold text-slate-900">Token {token.tokenNumber} · {token.registrationSource || 'Visit'}</h5>
+                                  <p className="mt-0.5 text-[11px] text-slate-600">{token.doctorName || 'Clinician not assigned'} · {token.department} · {token.serviceType}</p>
+                                </div>
+                                <span className="shrink-0 rounded bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">{token.status}</span>
+                              </div>
+                              <p className="mt-2 text-slate-700">{token.visitPurpose || token.visitComplaint || 'Visit reason not recorded'}</p>
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                {token.visitDate || token.createdDate || 'Date not recorded'} · {token.createdTime} · {token.currentStage || '1_REGISTRATION'}
+                                {token.bookingChannel ? ` · Booked via ${token.bookingChannel}` : ''}
+                              </p>
+                              {token.vitals && (
+                                <p className="mt-2 rounded bg-white p-2 text-[11px] text-slate-700">
+                                  Nursing: BP {token.vitals.bpSystolic}/{token.vitals.bpDiastolic} · HR {token.vitals.heartRate} · SpO2 {token.vitals.spO2}% · {token.vitals.triageLevel}
+                                </p>
+                              )}
+                              {token.doctorOrders && (
+                                <div className="mt-2 rounded bg-white p-2 text-[11px] text-slate-700">
+                                  <p><strong>Doctor:</strong> {token.doctorOrders.orderedByDoctorName} · {token.doctorOrders.clinicalAssessment || token.doctorOrders.healthSummary || 'Assessment not recorded'}</p>
+                                  <p className="mt-1"><strong>Diagnosis:</strong> {token.doctorOrders.diagnoses.map((diagnosis) => `${diagnosis.code} ${diagnosis.description}`).join(', ') || 'Not recorded'}</p>
+                                  <p className="mt-1"><strong>Lab / Radiology:</strong> {[...token.doctorOrders.labRequests.map((order) => order.testName), ...token.doctorOrders.radiologyRequests.map((order) => order.studyName)].join(', ') || 'None ordered'}</p>
+                                </div>
+                              )}
+                              {token.billingSummary && (
+                                <p className="mt-2 rounded bg-white p-2 text-[11px] text-slate-700">
+                                  Cashier: {token.billingSummary.cashierName} · ${token.billingSummary.totalPaid.toFixed(2)} paid · {token.billingSummary.paymentStatus}
+                                </p>
+                              )}
+                              {token.diagnosticReports?.map((report) => (
+                                <p key={report.id} className="mt-2 rounded bg-white p-2 text-[11px] text-slate-700">
+                                  {report.department}: {report.testOrStudyName} · {report.status} · {report.impression || report.findings}
+                                </p>
+                              ))}
+                              {token.historyLogs && token.historyLogs.length > 0 && (
+                                <details className="mt-2">
+                                  <summary className="cursor-pointer text-[10px] font-semibold text-blue-800">Visit activity ({token.historyLogs.length})</summary>
+                                  <ol className="mt-2 space-y-1 border-l border-blue-200 pl-3">
+                                    {token.historyLogs.map((log, index) => (
+                                      <li key={`${token.id}-log-${index}`} className="text-[10px] text-slate-600">
+                                        {log.timestamp} · {log.actor}: {log.action}
+                                      </li>
+                                    ))}
+                                  </ol>
+                                </details>
+                              )}
+                            </article>
+                          ))}
+                        </div>
+                      )}
+
                       <h4 className="mb-2 text-xs font-bold uppercase text-slate-700">Past Doctor Visits</h4>
                       {patientVisits.length === 0 ? (
                         <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No previous doctor visits are recorded for this patient.</p>
@@ -1062,7 +1183,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-blue-600" />
                     <h4 className="font-bold text-xs uppercase tracking-wider text-slate-800">
-                      Clinical Encounter Notes ({patientNotes.length})
+                      Medical Reports & Clinical Notes ({patientNotes.length})
                     </h4>
                   </div>
                 <button
@@ -1070,12 +1191,13 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
-                  <span>{isAddingNote ? 'Cancel Note' : 'Add Note'}</span>
+                  <span>{isAddingNote ? 'Cancel Report' : 'Create Medical Report'}</span>
                 </button>
               </div>
 
               {isAddingNote && (
                 <form onSubmit={handleCreateNote} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2 text-xs">
+                  {currentVisitToken && <p className="rounded-md border border-teal-200 bg-teal-50 px-2.5 py-2 text-[10px] font-semibold text-teal-800">This report will be saved to visit token {currentVisitToken.tokenNumber} ({currentVisitToken.visitDate || currentVisitToken.createdDate}).</p>}
                   <div>
                     <label className="font-bold text-slate-600 block mb-1">Chief Complaint</label>
                     <input

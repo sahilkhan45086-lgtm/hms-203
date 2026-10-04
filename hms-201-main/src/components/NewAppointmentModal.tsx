@@ -37,6 +37,7 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   const [date, setDate] = useState(presetDate || new Date().toISOString().split('T')[0]);
   const [timeSlot, setTimeSlot] = useState(presetTimeSlot || '10:00 AM');
   const [priority, setPriority] = useState<AppointmentPriority>('Normal');
+  const [bookingChannel, setBookingChannel] = useState<'Clinic' | 'Call Center' | 'Application'>('Clinic');
   const [isTelehealth, setIsTelehealth] = useState(false);
   const [chiefComplaint, setChiefComplaint] = useState('Routine clinical consultation & review');
   const [patientQuery, setPatientQuery] = useState('');
@@ -46,6 +47,8 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
     setDoctorId(presetDoctorId || doctors[0]?.id || '');
     setDate(presetDate || new Date().toISOString().split('T')[0]);
     setTimeSlot(presetTimeSlot || '10:00 AM');
+    setBookingChannel('Clinic');
+    setPatientQuery('');
   }, [isOpen, presetDoctorId, presetDate, presetTimeSlot, doctors]);
 
   useEffect(() => {
@@ -113,6 +116,11 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
     addAppointment({
       patientId: selectedPatient.id,
       patientName: `${selectedPatient.firstName} ${selectedPatient.lastName}`,
+      patientPhone: selectedPatient.phone,
+      patientNationalId: selectedPatient.emiratesId,
+      patientPassportNo: selectedPatient.passportNo,
+      patientRegistrationNo: selectedPatient.rgNo || selectedPatient.id,
+      bookingChannel,
       patientAge: selectedPatient.age,
       patientGender: selectedPatient.gender,
       doctorId: selectedDoc.id,
@@ -262,6 +270,27 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
                 ))}
               </select>
             </div>
+
+            <div>
+              <label htmlFor="appointment-booking-channel" className="text-[11px] font-semibold text-slate-700 block mb-1">
+                Booking Channel
+              </label>
+              <select
+                id="appointment-booking-channel"
+                value={bookingChannel}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === 'Clinic' || value === 'Call Center' || value === 'Application') {
+                    setBookingChannel(value);
+                  }
+                }}
+                className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs font-medium focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="Clinic">Clinic / Front Desk</option>
+                <option value="Call Center">Call Center</option>
+                <option value="Application">Patient Application</option>
+              </select>
+            </div>
           </div>
 
           {/* Classification Section 2: Date, Time & Priority */}
@@ -408,4 +437,3 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
     </div>
   );
 };
-

@@ -1,6 +1,6 @@
 export type PatientStatus = 'Inpatient' | 'Outpatient' | 'Emergency' | 'Discharged';
 
-export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-' | 'Unknown';
 
 export interface Vitals {
   heartRate: number; // bpm
@@ -118,6 +118,7 @@ export interface PatientService {
 export interface ClinicalNote {
   id: string;
   date: string;
+  encounterTokenId?: string;
   doctorName?: string;
   doctorSpecialty?: string;
   chiefComplaint?: string;
@@ -185,6 +186,19 @@ export interface InsurancePolicy {
   provider: string;
   policyNumber: string;
   tpa?: string;
+  regulator?: 'DHA' | 'DOH' | 'MOHAP' | 'Other';
+  network?: string;
+  planName?: string;
+  cardNumber?: string;
+  certificateNumber?: string;
+  dependentNumber?: string;
+  claimFormNo?: string;
+  requiresPreAuthorization?: boolean;
+  preExistingWaitingPeriod?: string;
+  verificationReference?: string;
+  dailyClinicLimitAed?: number;
+  verifiedAt?: string;
+  verifiedBy?: string;
   memberId?: string;
   dhaMemberId?: string;
   clientNumber?: string;
@@ -289,6 +303,9 @@ export interface Patient {
   hasTravelHistory?: boolean;
   consentSigned?: boolean;
   consentTimestamp?: string;
+  consentSignature?: string;
+  consentSignerRole?: 'Patient' | 'Legal guardian';
+  consentSignerRelationship?: string;
   insuranceList?: DetailedInsuranceRecord[];
   referral?: {
     type: 'Internal' | 'External Center' | 'Walk-In' | 'Corporate' | 'Online Booking';
@@ -355,6 +372,11 @@ export interface Appointment {
   id: string; // APT-2026-001
   patientId: string;
   patientName: string;
+  patientPhone?: string;
+  patientNationalId?: string;
+  patientPassportNo?: string;
+  patientRegistrationNo?: string;
+  bookingChannel?: 'Clinic' | 'Call Center' | 'Application';
   patientAge: number;
   patientGender: string;
   doctorId: string;
@@ -618,6 +640,11 @@ export interface TokenBillingSummary {
   receiptNumber?: string;
   cashierName: string;
   billedAt: string;
+  insuranceAuthorizationStatus?: 'Required' | 'Approved' | 'Not Required';
+  dailyInsuranceLimitApplied?: boolean;
+  dailyInsuranceLimitAed?: number;
+  dailyInsuranceUsedBeforeAed?: number;
+  dailyInsuranceUsedAfterAed?: number;
 }
 
 export interface TokenDiagnosticReport {
@@ -661,19 +688,48 @@ export interface ReceptionToken {
   counterOrRoom: string;
   // Patient visit metadata for doctor / nurse / lab / cashier visibility
   visitType?: 'Consultation' | 'Walk-in' | 'Follow-up' | 'Emergency' | 'Lab Review' | 'Billing' | 'Technician';
+  visitCode?: 'C' | 'NC' | 'TEC';
+  registeredBy?: string;
   visitPurpose?: string;
   visitComplaint?: string;
   registrationSource?: 'New Registration' | 'Existing Patient' | 'Walk-in' | 'Appointment';
   patientAge?: number;
   patientGender?: string;
   patientDetails?: {
+    registrationNumber?: string;
+    title?: string;
+    middleName?: string;
     dateOfBirth?: string;
+    nationality?: string;
+    maritalStatus?: string;
+    bloodGroup?: BloodGroup;
     email?: string;
     address?: string;
     nationalId?: string;
     passportNumber?: string;
+    allergies?: Patient['allergies'];
+    chronicConditions?: string[];
+    emergencyContact?: Patient['emergencyContact'];
+    consentSigned?: boolean;
+    consentTimestamp?: string;
+    consentSignature?: string;
+    consentSignerRole?: Patient['consentSignerRole'];
+    consentSignerRelationship?: string;
     insurancePolicyNumber?: string;
     insuranceMemberId?: string;
+    insuranceProvider?: string;
+    insuranceTpa?: string;
+    insuranceRegulator?: InsurancePolicy['regulator'];
+    insuranceNetwork?: string;
+    insurancePlanName?: string;
+    insuranceCardNumber?: string;
+    insuranceCertificateNumber?: string;
+    insuranceDependentNumber?: string;
+    insuranceClaimFormNo?: string;
+    insurancePreAuthorizationRequired?: boolean;
+    insurancePreExistingWaitingPeriod?: string;
+    insuranceVerificationReference?: string;
+    insuranceDailyClinicLimitAed?: number;
     insuranceStatus?: InsurancePolicy['status'];
     insuranceExpiryDate?: string;
     insuranceCards?: DetailedInsuranceRecord[];
@@ -682,6 +738,8 @@ export interface ReceptionToken {
   payMode?: 'Self' | 'Insurance' | 'Discount Card' | 'Company';
   visitDate?: string;
   patientVisitSummary?: string;
+  appointmentId?: string;
+  bookingChannel?: 'Clinic' | 'Call Center' | 'Application';
   // 6-Step Workflow Tracking
   currentStage?: TokenWorkflowStage;
   paymentScheme?: TokenPaymentScheme;
