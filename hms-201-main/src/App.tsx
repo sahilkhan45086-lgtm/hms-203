@@ -200,9 +200,11 @@ const HospitalAppContent: React.FC = () => {
       case 'coder':
         return <MedicalCoderWorkspace />;
 
+      case 'insurance-approvals':
       case 'billing':
         return (
           <BillingInvoicing
+            initialSubTab={activeTab === 'insurance-approvals' ? 'insurance' : 'overview'}
             onOpenNewInvoice={() => setIsNewInvoiceOpen(true)}
             onOpenPaymentModal={(inv) => setPayingInvoice(inv)}
           />

@@ -4,6 +4,7 @@ export interface DoctorDutyWindow {
   isOnDuty: boolean;
   startTime: string;
   endTime: string;
+  intervalMinutes?: number;
 }
 
 const parseClockTime = (value: string): number | null => {
@@ -35,6 +36,7 @@ export const getDoctorDutyWindow = (
       isOnDuty: datedSchedule.isOnDuty,
       startTime: datedSchedule.isOnDuty ? datedSchedule.startTime : '',
       endTime: datedSchedule.isOnDuty ? datedSchedule.endTime : '',
+      intervalMinutes: datedSchedule.intervalMinutes || 30,
     };
   }
 
@@ -54,7 +56,7 @@ export const getDoctorDutyWindow = (
   return { isOnDuty: true, startTime, endTime };
 };
 
-export const getDutyAppointmentSlots = (window: DoctorDutyWindow, intervalMinutes = 30): string[] => {
+export const getDutyAppointmentSlots = (window: DoctorDutyWindow, intervalMinutes = window.intervalMinutes || 30): string[] => {
   if (!window.isOnDuty) return [];
   const startMinutes = parseClockTime(window.startTime);
   const endMinutes = parseClockTime(window.endTime);

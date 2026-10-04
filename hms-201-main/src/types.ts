@@ -419,6 +419,21 @@ export interface DoctorDutySchedule {
   isOnDuty: boolean;
   startTime: string;
   endTime: string;
+  intervalMinutes?: number;
+  remark?: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface StaffDutySchedule {
+  id: string;
+  staffId: string;
+  date: string;
+  isOnDuty: boolean;
+  startTime: string;
+  endTime: string;
+  intervalMinutes?: number;
+  remark?: string;
   updatedAt: string;
   updatedBy: string;
 }
@@ -780,6 +795,9 @@ export interface Invoice {
   paymentMethod?: PaymentMethod;
   transactions: PaymentTransaction[];
   notes?: string;
+  dueRecordedAt?: string;
+  dueRecordedBy?: string;
+  dueRemarks?: string;
   insuranceClaimNumber?: string;
 }
 
@@ -810,6 +828,7 @@ export type UserRole =
   | 'admin'
   | 'doctor'
   | 'nurse'
+  | 'physiotherapist'
   | 'receptionist'
   | 'pharmacist'
   | 'lab'

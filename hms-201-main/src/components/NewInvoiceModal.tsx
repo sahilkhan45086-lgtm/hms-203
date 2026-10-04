@@ -22,6 +22,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
   const [itemDesc, setItemDesc] = useState('');
   const [itemCategory, setItemCategory] = useState<BillItem['category']>('Consultation');
   const [itemPrice, setItemPrice] = useState(75.0);
+  const [dueRemarks, setDueRemarks] = useState('');
   const [formError, setFormError] = useState('');
   const selectedPatient = patients.find((patient) => patient.id === patientId);
   const patientTokens = receptionTokens.filter((token) => token.patientId === patientId && token.doctorOrders);
@@ -35,6 +36,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
     setDiagnoses([]);
     setInsuranceCovered(0);
     setCopayAmount(25);
+    setDueRemarks('');
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -169,6 +171,10 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
     }
     const submitter = (e.nativeEvent as SubmitEvent).submitter;
     const saveDraft = submitter instanceof HTMLButtonElement && submitter.value === 'draft';
+    if (!saveDraft && balanceDue > 0 && !dueRemarks.trim()) {
+      setFormError('Add a remark explaining the patient balance before issuing the invoice.');
+      return;
+    }
 
     createInvoice({
       patientId: selectedPatient.id,
@@ -184,6 +190,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
       items,
       insuranceCoveredAmount: insuranceCovered,
       copayAmount,
+      dueRemarks: dueRemarks.trim() || undefined,
       tax: 0,
     });
 
@@ -391,6 +398,19 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
               </span>
             </div>
           </div>
+          {balanceDue > 0 && (
+            <label className="block text-[10px] font-semibold text-slate-600">
+              Patient due remark <span className="text-rose-600">* required to issue</span>
+              <textarea
+                value={dueRemarks}
+                onChange={(event) => setDueRemarks(event.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="Reason or details for the balance due..."
+                className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white p-2 text-xs font-normal"
+              />
+            </label>
+          )}
 
           {/* Footer Controls */}
           {formError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-800">{formError}</p>}

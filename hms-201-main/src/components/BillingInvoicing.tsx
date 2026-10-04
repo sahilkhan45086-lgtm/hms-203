@@ -32,6 +32,7 @@ import { PatientLookup } from './billing/PatientLookup';
 interface BillingInvoicingProps {
   onOpenNewInvoice: () => void;
   onOpenPaymentModal: (invoice: Invoice) => void;
+  initialSubTab?: BillingSubTab;
 }
 
 type BillingSubTab = 'overview' | 'invoices' | 'dues' | 'insurance' | 'advance' | 'refunds' | 'pos';
@@ -39,6 +40,7 @@ type BillingSubTab = 'overview' | 'invoices' | 'dues' | 'insurance' | 'advance' 
 export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
   onOpenNewInvoice,
   onOpenPaymentModal,
+  initialSubTab = 'overview',
 }) => {
   const {
     invoices,
@@ -54,17 +56,22 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
     currentRole,
   } = useHospital();
 
-  const [activeSubTab, setActiveSubTab] = useState<BillingSubTab>('overview');
+  const canViewInsuranceApprovals = currentRole === 'admin' || currentRole === 'receptionist';
+  const [activeSubTab, setActiveSubTab] = useState<BillingSubTab>(initialSubTab);
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
   const [cashierPatientId, setCashierPatientId] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [insuranceDateFilter, setInsuranceDateFilter] = useState('');
   const [insuranceDoctorFilter, setInsuranceDoctorFilter] = useState('all');
+  const [insuranceApprovalStatusFilter, setInsuranceApprovalStatusFilter] = useState('all');
+  const [insuranceServiceCategoryFilter, setInsuranceServiceCategoryFilter] = useState('all');
+  const [insuranceSearchQuery, setInsuranceSearchQuery] = useState('');
+  const [dueRecordDateFilter, setDueRecordDateFilter] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedOutstandingPatientId, setSelectedOutstandingPatientId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (currentRole !== 'admin' && activeSubTab === 'insurance') setActiveSubTab('invoices');
-  }, [currentRole, activeSubTab]);
+    if (!canViewInsuranceApprovals && activeSubTab === 'insurance') setActiveSubTab('invoices');
+  }, [canViewInsuranceApprovals, activeSubTab]);
 
   // Modal open states
   const [isAdvanceModalOpen, setIsAdvanceModalOpen] = useState(false);
@@ -130,6 +137,26 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
     })
     .sort((first, second) => second.balance - first.balance);
   const filteredOutstandingPatients = outstandingPatients.filter((patient) => patient.patientId === cashierPatientId);
+  const yesterdayDate = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const dueRegisterInvoices = invoices
+    .filter((invoice) => {
+      if (invoice.status === 'Draft' || Number(invoice.patientPayable) <= 0) return false;
+      const recordedDate = invoice.dueRecordedAt?.slice(0, 10) || invoice.issueDate;
+      return (!dueRecordDateFilter || recordedDate === dueRecordDateFilter) &&
+        (!cashierPatientId || invoice.patientId === cashierPatientId);
+    })
+    .sort((first, second) =>
+      (second.dueRecordedAt || second.createdAt || second.issueDate)
+        .localeCompare(first.dueRecordedAt || first.createdAt || first.issueDate)
+    );
+  const dueRegisterRecordedTotal = dueRegisterInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.patientPayable) || 0),
+    0
+  );
+  const dueRegisterOutstandingTotal = dueRegisterInvoices.reduce(
+    (sum, invoice) => sum + Math.max(0, Number(invoice.balanceDue) || 0),
+    0
+  );
   const patientAdvancePayments = advancePayments.filter((advance) => advance.patientId === cashierPatientId);
   const patientRefundPayments = refundPayments.filter((refund) => refund.patientId === cashierPatientId);
   const patientPosTransactions = posTransactions.filter((transaction) => transaction.patientId === cashierPatientId);
@@ -155,12 +182,26 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
   const totalApprovedPreAuth = insuranceApprovals
     .filter((approval) => approval.approvalStatus === 'Approved')
     .reduce((sum, approval) => sum + approval.approvedAmount, 0);
+  const pendingInsuranceApprovals = insuranceApprovals.filter(
+    (approval) => approval.approvalStatus === 'Pending' || approval.approvalStatus === 'Query Raised'
+  ).length;
   const insuranceDoctorOptions = [...new Set(insuranceApprovals.map((approval) => approval.doctorName))].sort();
   const filteredInsuranceApprovals = insuranceApprovals.filter((approval) =>
     (!insuranceDateFilter || approval.approvalDate === insuranceDateFilter) &&
     Boolean(cashierPatientId) &&
     approval.patientId === cashierPatientId &&
-    (insuranceDoctorFilter === 'all' || approval.doctorName === insuranceDoctorFilter)
+    (insuranceDoctorFilter === 'all' || approval.doctorName === insuranceDoctorFilter) &&
+    (insuranceApprovalStatusFilter === 'all' || approval.approvalStatus === insuranceApprovalStatusFilter) &&
+    (insuranceServiceCategoryFilter === 'all' || approval.serviceCategory === insuranceServiceCategoryFilter) &&
+    (!insuranceSearchQuery.trim() || [
+      approval.approvalNumber,
+      approval.insuranceProvider,
+      approval.policyNumber,
+      approval.serviceName,
+      approval.serviceCode || '',
+      approval.doctorName,
+      approval.department,
+    ].some((value) => value.toLowerCase().includes(insuranceSearchQuery.trim().toLowerCase())))
   );
   const selectedInsurancePatient = patients.find((patient) => patient.id === cashierPatientId);
   const selectedPatientVisits = [...(selectedInsurancePatient?.facilityVisits || [])]
@@ -227,6 +268,9 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
             { id: 'dues', label: 'Patient dues', icon: UserCheck, count: outstandingPatients.length },
             { id: 'advance', label: 'Deposits', icon: DollarSign, count: advancePayments.length },
             { id: 'refunds', label: 'Refunds', icon: RotateCcw, count: pendingRefundApprovals || refundPayments.length },
+            ...(canViewInsuranceApprovals
+              ? [{ id: 'insurance' as const, label: 'Insurance approvals', icon: ShieldCheck, count: pendingInsuranceApprovals }]
+              : []),
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeSubTab === tab.id;
@@ -254,9 +298,6 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
             <button type="button" onClick={() => setActiveSubTab('pos')} aria-current={activeSubTab === 'pos' ? 'page' : undefined} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${activeSubTab === 'pos' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
               <Terminal className="mr-1 inline h-3.5 w-3.5" />POS &amp; cash drawer
             </button>
-            {currentRole === 'admin' && <button type="button" onClick={() => setActiveSubTab('insurance')} aria-current={activeSubTab === 'insurance' ? 'page' : undefined} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${activeSubTab === 'insurance' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-              <ShieldCheck className="mr-1 inline h-3.5 w-3.5" />Insurance approvals
-            </button>}
           </div>
           <button
             onClick={handlePrint}
@@ -322,6 +363,9 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
               <button type="button" onClick={() => setActiveSubTab('refunds')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-rose-300 hover:bg-rose-50/50">
                 <RotateCcw className="h-4 w-4 text-rose-700" /><span><strong className="block text-xs text-slate-900">Refund or adjustment</strong><small className="text-[10px] text-slate-500">Submit or approve refund</small></span>
               </button>
+              {canViewInsuranceApprovals && <button type="button" onClick={() => setActiveSubTab('insurance')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-purple-300 hover:bg-purple-50/50">
+                <ShieldCheck className="h-4 w-4 text-purple-700" /><span><strong className="block text-xs text-slate-900">Insurance approvals</strong><small className="text-[10px] text-slate-500">{pendingInsuranceApprovals} pending or queried · view patient authorizations</small></span>
+              </button>}
             </div>
           </section>
 
@@ -346,7 +390,7 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setActiveSubTab('advance')} className="rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"><strong className="block text-xs text-slate-900">Advance register</strong><span className="text-[10px] text-slate-500">{advancePayments.length} receipts · ${totalAdvanceDeposited.toFixed(2)} collected</span></button>
                 <button type="button" onClick={() => setActiveSubTab('pos')} className="rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"><strong className="block text-xs text-slate-900">POS &amp; cash drawer</strong><span className="text-[10px] text-slate-500">{settledPosCount} settled · ${totalPosVolume.toFixed(2)} volume</span></button>
-                {currentRole === 'admin' && <button type="button" onClick={() => setActiveSubTab('insurance')} className="col-span-2 flex items-center justify-between rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"><span><strong className="block text-xs text-slate-900">Insurance approvals</strong><span className="text-[10px] text-slate-500">{insuranceApprovals.length} authorization records</span></span><ShieldCheck className="h-4 w-4 text-slate-500" /></button>}
+                {canViewInsuranceApprovals && <button type="button" onClick={() => setActiveSubTab('insurance')} className="col-span-2 flex items-center justify-between rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"><span><strong className="block text-xs text-slate-900">Insurance approvals</strong><span className="text-[10px] text-slate-500">{insuranceApprovals.length} authorization records · {pendingInsuranceApprovals} need follow-up</span></span><ShieldCheck className="h-4 w-4 text-slate-500" /></button>}
               </div>
             </div>
           </section>
@@ -588,6 +632,86 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
             </div>
           </div>
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <header className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Patient due register</h3>
+                <p className="mt-0.5 text-[10px] text-slate-500">View balances entered by cashiers today, yesterday, or any selected date. Settled dues remain in the history.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button type="button" onClick={() => setDueRecordDateFilter(new Date().toISOString().slice(0, 10))} aria-pressed={dueRecordDateFilter === new Date().toISOString().slice(0, 10)} className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold ${dueRecordDateFilter === new Date().toISOString().slice(0, 10) ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>Today</button>
+                <button type="button" onClick={() => setDueRecordDateFilter(yesterdayDate)} aria-pressed={dueRecordDateFilter === yesterdayDate} className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold ${dueRecordDateFilter === yesterdayDate ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>Yesterday</button>
+                <button type="button" onClick={() => setDueRecordDateFilter('')} aria-pressed={!dueRecordDateFilter} className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold ${!dueRecordDateFilter ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>All dates</button>
+                <label className="text-[10px] font-semibold text-slate-600">
+                  Choose date
+                  <input type="date" value={dueRecordDateFilter} onChange={(event) => setDueRecordDateFilter(event.target.value)} className="ml-2 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal" />
+                </label>
+              </div>
+            </header>
+            <div className="grid gap-3 border-b border-slate-100 p-3 sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Due records</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">{dueRegisterInvoices.length}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Amount entered</p>
+                <p className="mt-1 font-mono text-lg font-bold text-slate-900">${dueRegisterRecordedTotal.toFixed(2)}</p>
+              </div>
+              <div className="rounded-lg bg-rose-50 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-rose-700">Still outstanding</p>
+                <p className="mt-1 font-mono text-lg font-bold text-rose-800">${dueRegisterOutstandingTotal.toFixed(2)}</p>
+              </div>
+            </div>
+            {dueRegisterInvoices.length === 0 ? (
+              <p className="p-6 text-center text-xs text-slate-500">No patient dues were recorded for {dueRecordDateFilter || 'the selected history'}{cashierPatientId ? ' for this patient' : ''}.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px] text-left text-xs">
+                  <thead className="bg-white text-[10px] font-bold uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2.5">Due date / time</th>
+                      <th className="px-3 py-2.5">Patient / invoice</th>
+                      <th className="px-3 py-2.5">Cashier</th>
+                      <th className="px-3 py-2.5 text-right">Amount entered</th>
+                      <th className="px-3 py-2.5 text-right">Remaining due</th>
+                      <th className="px-3 py-2.5">Remark</th>
+                      <th className="px-3 py-2.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dueRegisterInvoices.map((invoice) => {
+                      const patient = patients.find((item) => item.id === invoice.patientId);
+                      const recordedAt = invoice.dueRecordedAt || invoice.createdAt;
+                      const remainingDue = Math.max(0, Number(invoice.balanceDue) || 0);
+                      return (
+                        <tr key={invoice.id} className="align-top hover:bg-slate-50/70">
+                          <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">
+                            <p>{recordedAt?.slice(0, 10) || invoice.issueDate}</p>
+                            {recordedAt && <p className="mt-0.5 text-[10px] text-slate-500">{new Date(recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <p className="font-semibold text-slate-900">{patient ? `${patient.firstName} ${patient.lastName}` : invoice.patientName}</p>
+                            <p className="mt-0.5 font-mono text-[10px] text-slate-500">{patient?.rgNo || invoice.patientId} · {invoice.id}</p>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-700">{invoice.dueRecordedBy || 'Not recorded'}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-semibold text-slate-800">${Number(invoice.patientPayable).toFixed(2)}</td>
+                          <td className={`whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold ${remainingDue > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                            {remainingDue > 0 ? `$${remainingDue.toFixed(2)}` : 'Cleared'}
+                          </td>
+                          <td className="max-w-xs px-3 py-2.5 text-slate-600">{invoice.dueRemarks || invoice.notes || 'No remark recorded'}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                            {remainingDue > 0
+                              ? <button type="button" onClick={() => onOpenPaymentModal(invoice)} className="rounded-md bg-teal-700 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-teal-800">Settle bill</button>
+                              : <span className="text-[10px] font-semibold text-emerald-700">Settled</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+          <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             <header className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Patient outstanding</h3>
@@ -643,7 +767,7 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
       )}
 
       {/* SUB-TAB 2: INSURANCE APPROVALS & PRE-AUTHORISATION */}
-      {activeSubTab === 'insurance' && currentRole === 'admin' && (
+      {activeSubTab === 'insurance' && canViewInsuranceApprovals && (
         <div className="space-y-4">
           {/* Header & Metrics */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -677,13 +801,17 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
                   Approval handling
                 </span>
                 <p className="text-xs text-slate-600 mt-1">
-                  Medical Coders review requests and publish insurer decisions. Billing can view the recorded status here.
+                  Medical staff request authorization from the patient facility record. Medical Coders review requests and publish insurer decisions; billing tracks the outcome here.
                 </p>
               </div>
             </div>
           </div>
 
           <section aria-label="Filter insurance approvals" className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-[11px] font-semibold text-slate-700">
+              Search authorization
+              <input type="search" value={insuranceSearchQuery} onChange={(event) => setInsuranceSearchQuery(event.target.value)} placeholder="Approval no., service, insurer..." className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-2 text-xs font-normal" />
+            </label>
             <label className="text-[11px] font-semibold text-slate-700">
               Approval date
               <input type="date" value={insuranceDateFilter} onChange={(event) => setInsuranceDateFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-2 text-xs font-normal" />
@@ -700,9 +828,30 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
                 {insuranceDoctorOptions.map((doctorName) => <option key={doctorName} value={doctorName}>{doctorName}</option>)}
               </select>
             </label>
+            <label className="text-[11px] font-semibold text-slate-700">
+              Approval status
+              <select value={insuranceApprovalStatusFilter} onChange={(event) => setInsuranceApprovalStatusFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal">
+                <option value="all">All statuses</option>
+                <option value="Pending">Pending</option>
+                <option value="Query Raised">Query raised</option>
+                <option value="Approved">Approved</option>
+                <option value="Rejected">Rejected</option>
+              </select>
+            </label>
+            <label className="text-[11px] font-semibold text-slate-700">
+              Service category
+              <select value={insuranceServiceCategoryFilter} onChange={(event) => setInsuranceServiceCategoryFilter(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-normal">
+                <option value="all">All categories</option>
+                <option value="Procedure">Procedure</option>
+                <option value="Lab Test">Lab test</option>
+                <option value="Radiology">Radiology</option>
+                <option value="Consultation">Consultation</option>
+                <option value="IPD Admission">IPD admission</option>
+              </select>
+            </label>
             <div className="flex items-end justify-between gap-2 text-xs">
               <span className="pb-2 text-slate-500">{filteredInsuranceApprovals.length} approvals</span>
-              <button type="button" onClick={() => { setInsuranceDateFilter(''); setInsuranceDoctorFilter('all'); }} className="mb-1 rounded-md border border-slate-300 px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Clear filters</button>
+              <button type="button" onClick={() => { setInsuranceSearchQuery(''); setInsuranceDateFilter(''); setInsuranceDoctorFilter('all'); setInsuranceApprovalStatusFilter('all'); setInsuranceServiceCategoryFilter('all'); }} className="mb-1 rounded-md border border-slate-300 px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Clear filters</button>
             </div>
           </section>
 
@@ -809,6 +958,71 @@ export const BillingInvoicing: React.FC<BillingInvoicingProps> = ({
               </table>
             </div>
           </div>
+
+          {selectedInsurancePatient && (
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-2 border-b border-slate-200 bg-slate-50/70 p-3.5 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">Facility services &amp; insurance authorization · {selectedInsurancePatient.firstName} {selectedInsurancePatient.lastName}</h3>
+                  <p className="mt-0.5 text-[10px] text-slate-500">Services entered by the medical team and their linked payer authorization.</p>
+                </div>
+                <span className="text-[10px] text-slate-500">{selectedInsurancePatient.services?.length || 0} facility services</span>
+              </div>
+              {!selectedInsurancePatient.services?.length ? (
+                <p className="p-4 text-xs text-slate-500">No facility services have been recorded for this patient.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left text-xs">
+                    <thead className="bg-white text-[10px] font-bold uppercase text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2.5">Service</th>
+                        <th className="px-3 py-2.5">Added to facility record</th>
+                        <th className="px-3 py-2.5">Estimated cost</th>
+                        <th className="px-3 py-2.5">Authorization</th>
+                        <th className="px-3 py-2.5">Status / coverage</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedInsurancePatient.services.map((service) => {
+                        const approval = insuranceApprovals.find((record) => record.id === service.insuranceApprovalId);
+                        return (
+                          <tr key={service.id}>
+                            <td className="px-3 py-2.5">
+                              <p className="font-semibold text-slate-800">{service.name}</p>
+                              <p className="text-[10px] text-slate-500">{service.category}{service.serviceCode ? ` · ${service.serviceCode}` : ''}</p>
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-600">{new Date(service.addedAt).toLocaleDateString()} · {service.addedBy}</td>
+                            <td className="px-3 py-2.5 font-mono text-slate-700">${service.estimatedCost.toFixed(2)}</td>
+                            <td className="px-3 py-2.5">
+                              <p className="font-mono text-slate-800">{approval?.approvalNumber || (approval ? 'Request pending' : 'Not requested')}</p>
+                              {approval && <p className="text-[10px] text-slate-500">{approval.insuranceProvider} · {approval.policyNumber}</p>}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              {approval ? (
+                                <>
+                                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                                    approval.approvalStatus === 'Approved' ? 'bg-emerald-100 text-emerald-800' :
+                                    approval.approvalStatus === 'Pending' ? 'bg-amber-100 text-amber-800' :
+                                    approval.approvalStatus === 'Query Raised' ? 'bg-orange-100 text-orange-800' :
+                                    'bg-rose-100 text-rose-800'
+                                  }`}>{approval.approvalStatus}</span>
+                                  <p className="mt-1 text-[10px] text-slate-600">
+                                    {approval.approvalStatus === 'Approved'
+                                      ? `$${approval.approvedAmount.toFixed(2)} approved · ${approval.copayPercentage}% copay · valid to ${approval.validUntil || 'not specified'}`
+                                      : approval.remarks || 'Awaiting payer decision'}
+                                  </p>
+                                </>
+                              ) : <span className="text-[10px] text-slate-500">No authorization request linked</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
 
           {selectedInsurancePatient && (
             <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

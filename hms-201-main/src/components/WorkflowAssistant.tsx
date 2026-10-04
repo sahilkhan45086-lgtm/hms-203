@@ -30,6 +30,10 @@ const ROLE_ACTIONS: Record<UserRole, WorkflowAction[]> = {
     { label: 'Review patient visits', tab: 'patients' },
     { label: 'Open inpatient list', tab: 'inpatient' },
   ],
+  physiotherapist: [
+    { label: 'Review visit activity', tab: 'overview' },
+    { label: 'Find a patient', tab: 'enquiry' },
+  ],
   receptionist: [
     { label: 'Register a patient', tab: 'registration' },
     { label: 'View today’s queue', tab: 'appointments' },
@@ -190,6 +194,7 @@ export const WorkflowAssistant: React.FC = () => {
       admin: ['overview', 'registration', 'patients', 'enquiry', 'inpatient', 'outpatient', 'triage', 'appointments', 'doctor-rota', 'billing', 'pharmacy', 'labs', 'radiology', 'wards', 'pricelist', 'staff', 'coder', 'reports', 'admin'],
       doctor: ['patients', 'enquiry', 'triage', 'inpatient', 'outpatient', 'appointments', 'doctor-rota', 'labs', 'radiology', 'wards', 'pricelist'],
       nurse: ['patients', 'enquiry', 'inpatient', 'outpatient', 'triage', 'labs', 'radiology', 'wards'],
+      physiotherapist: ['overview', 'enquiry'],
       receptionist: ['overview', 'registration', 'enquiry', 'appointments', 'billing', 'pricelist', 'reports'],
       pharmacist: ['enquiry', 'pharmacy', 'billing'],
       lab: ['enquiry', 'labs', 'overview'],

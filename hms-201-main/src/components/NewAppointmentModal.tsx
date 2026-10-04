@@ -41,6 +41,14 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   const [isTelehealth, setIsTelehealth] = useState(false);
   const [chiefComplaint, setChiefComplaint] = useState('Routine clinical consultation & review');
   const [patientQuery, setPatientQuery] = useState('');
+  const blockedDutySlots = (() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('medcore_blocked_duty_slots_v1') || '[]');
+      return Array.isArray(saved) && saved.every((slot) => typeof slot === 'string') ? saved : [];
+    } catch {
+      return [];
+    }
+  })();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -88,13 +96,22 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
     ? getDoctorDutyWindow(selectedDoc, doctorDutySchedules, date)
     : { isOnDuty: false, startTime: '', endTime: '' };
   const dutySlots = getDutyAppointmentSlots(dutyWindow);
-  const availableDutySlots = dutySlots.filter((slot) => !appointments.some(
-    (appointment) =>
-      appointment.doctorId === selectedDoc?.id &&
-      appointment.date === date &&
-      appointment.timeSlot === slot &&
-      ['Scheduled', 'Checked-In', 'In Consultation'].includes(appointment.status)
-  ));
+  const isSlotBlocked = (slot: string) =>
+    blockedDutySlots.includes(`${selectedDoc?.id || ''}|${date}|${slot}`) ||
+    blockedDutySlots.includes(`${selectedDoc?.id || ''}|${date}|${slot}|break`);
+  const isSlotBreak = (slot: string) =>
+    blockedDutySlots.includes(`${selectedDoc?.id || ''}|${date}|${slot}|break`);
+  const isSlotBooked = (slotDate: string, slotTime: string) =>
+    appointments.some(
+      (appointment) =>
+        appointment.doctorId === selectedDoc?.id &&
+        appointment.date === slotDate &&
+        appointment.timeSlot === slotTime &&
+        ['Scheduled', 'Checked-In', 'In Consultation'].includes(appointment.status)
+    );
+  const availableDutySlots = dutySlots.filter(
+    (slot) => !isSlotBlocked(slot) && !isSlotBooked(date, slot)
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -108,7 +125,7 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
       addNotification('Selection Missing', 'Please select both a patient and an attending doctor.', 'warning');
       return;
     }
-    if (!dutyWindow.isOnDuty || !dutySlots.includes(timeSlot) || isSlotBooked(date, timeSlot)) {
+    if (!dutyWindow.isOnDuty || !dutySlots.includes(timeSlot) || isSlotBooked(date, timeSlot) || isSlotBlocked(timeSlot)) {
       addNotification('Duty Slot Unavailable', 'Choose an open time within the doctor’s published duty for this date.', 'warning');
       return;
     }
@@ -172,15 +189,6 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
       subLabel: dateValue.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     };
   });
-
-  const isSlotBooked = (slotDate: string, slotTime: string) =>
-    appointments.some(
-      (appt) =>
-        appt.doctorId === selectedDoc?.id &&
-        appt.date === slotDate &&
-        appt.timeSlot === slotTime &&
-        ['Scheduled', 'Checked-In', 'In Consultation'].includes(appt.status)
-    );
 
   return (
     <div
@@ -330,20 +338,27 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
                   <span className="font-semibold text-rose-700">No duty scheduled</span>
                 )}
               </div>
-              {availableDutySlots.length > 0 ? (
+              {dutySlots.length > 0 ? (
                 <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {dutySlots.map((slot) => {
-                    const slotBooked = !availableDutySlots.includes(slot);
+                    const slotBooked = isSlotBooked(date, slot);
+                    const slotBlocked = isSlotBlocked(slot);
+                    const unavailable = slotBooked || slotBlocked;
                     const selected = timeSlot === slot;
                     return (
-                      <button key={slot} type="button" disabled={slotBooked} aria-pressed={selected} onClick={() => setTimeSlot(slot)} className={`min-h-9 rounded-md border px-2 py-1.5 text-xs font-semibold ${slotBooked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-blue-700 bg-blue-700 text-white' : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`}>
-                        {slotBooked ? 'Booked' : slot}
+                      <button key={slot} type="button" disabled={unavailable} aria-pressed={selected} onClick={() => setTimeSlot(slot)} className={`min-h-9 rounded-md border px-2 py-1.5 text-xs font-semibold ${unavailable ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : selected ? 'border-blue-700 bg-blue-700 text-white' : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`}>
+                        {slotBooked ? `${slot} · Booked` : slotBlocked ? `${slot} · ${isSlotBreak(slot) ? 'Break' : 'Off duty'}` : slot}
                       </button>
                     );
                   })}
                 </div>
               ) : (
                 <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No published duty shift for this doctor on this date. Select another day or contact administration.</p>
+              )}
+              {dutySlots.length > 0 && availableDutySlots.length === 0 && (
+                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  All slots for this shift are booked or marked off duty.
+                </p>
               )}
             </div>
 

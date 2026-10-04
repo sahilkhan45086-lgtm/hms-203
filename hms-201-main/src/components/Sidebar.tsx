@@ -35,6 +35,7 @@ export const Sidebar: React.FC = () => {
     patients,
     appointments,
     invoices,
+    insuranceApprovals,
     wardBeds,
     doctors,
     staff,
@@ -55,6 +56,9 @@ export const Sidebar: React.FC = () => {
     (a) => a.status === 'Checked-In' || a.status === 'In Consultation' || a.status === 'Scheduled'
   ).length;
   const pendingBillsCount = invoices.filter((i) => i.status === 'Pending').length;
+  const pendingInsuranceApprovalsCount = insuranceApprovals.filter(
+    (approval) => approval.approvalStatus === 'Pending' || approval.approvalStatus === 'Query Raised'
+  ).length;
   const lowPharmacyCount = pharmacy.filter((p) => p.stockQuantity <= p.minThreshold).length;
   const occupiedBedsCount = wardBeds.filter((b) => b.status === 'Occupied').length;
   const totalBeds = wardBeds.length;
@@ -72,7 +76,7 @@ export const Sidebar: React.FC = () => {
       icon: LayoutDashboard,
       badge: null,
       category: 'Patient Care',
-      roles: ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology'],
+      roles: ['admin', 'doctor', 'nurse', 'physiotherapist', 'receptionist', 'pharmacist', 'lab', 'radiology'],
     },
     {
       id: 'patients' as NavigationTab,
@@ -116,7 +120,7 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'appointments' as NavigationTab,
-      label: currentRole === 'receptionist' ? '2. Appointment' : 'Appointments',
+      label: currentRole === 'doctor' ? 'Doctor Appointments' : currentRole === 'receptionist' ? '2. Appointment' : 'Appointments',
       icon: Calendar,
       badge: activeQueueCount,
       category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Appointments & Duty',
@@ -124,7 +128,7 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'doctor-rota' as NavigationTab,
-      label: 'Duty Roster',
+      label: 'Staff Duty Roster',
       icon: CalendarClock,
       badge: null,
       category: 'Appointments & Duty',
@@ -136,7 +140,7 @@ export const Sidebar: React.FC = () => {
       icon: Search,
       badge: 'Lookup',
       category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Patient Care',
-      roles: ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology'],
+      roles: ['admin', 'doctor', 'nurse', 'physiotherapist', 'receptionist', 'pharmacist', 'lab', 'radiology'],
     },
     {
       id: 'labs' as NavigationTab,
@@ -169,6 +173,14 @@ export const Sidebar: React.FC = () => {
       badge: pendingBillsCount > 0 ? pendingBillsCount : null,
       category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Billing & Facilities',
       roles: ['admin', 'receptionist', 'pharmacist'],
+    },
+    {
+      id: 'insurance-approvals' as NavigationTab,
+      label: 'Insurance Approvals',
+      icon: ShieldCheck,
+      badge: pendingInsuranceApprovalsCount > 0 ? pendingInsuranceApprovalsCount : null,
+      category: currentRole === 'receptionist' ? 'Reception Desk Portal' : 'Billing & Facilities',
+      roles: ['admin', 'receptionist'],
     },
     {
       id: 'reports' as NavigationTab,

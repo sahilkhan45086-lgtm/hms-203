@@ -45,7 +45,7 @@ export const StaffManagement: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [staffToDeactivate, setStaffToDeactivate] = useState<StaffMember | null>(null);
 
-  const doctorManagedRoles: UserRole[] = ['doctor', 'nurse', 'lab', 'radiology'];
+  const doctorManagedRoles: UserRole[] = ['doctor', 'nurse', 'physiotherapist', 'lab', 'radiology'];
   const canManageStaff = currentRole === 'admin' || currentRole === 'doctor';
   const activeAdminCount = staff.filter((member) => member.role === 'admin' && member.isActive !== false).length;
 
@@ -184,7 +184,7 @@ export const StaffManagement: React.FC = () => {
             <label className="text-xs font-semibold text-slate-700">
               Role
               <select required value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal">
-                {(currentRole === 'admin' ? ['admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab', 'radiology', 'medical-coder'] as UserRole[] : doctorManagedRoles).map((role) => (
+                {(currentRole === 'admin' ? ['admin', 'doctor', 'nurse', 'physiotherapist', 'receptionist', 'pharmacist', 'lab', 'radiology', 'medical-coder'] as UserRole[] : doctorManagedRoles).map((role) => (
                   <option key={role} value={role}>{role.replace('-', ' ')}</option>
                 ))}
               </select>

@@ -165,6 +165,12 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
   );
   const canViewPatientBilling = currentRole === 'admin' || currentRole === 'receptionist';
   const patientServiceApprovals = insuranceApprovals.filter((approval) => approval.patientId === selectedPatient?.id);
+  const pendingServiceApprovalCount = patientServiceApprovals.filter(
+    (approval) => approval.approvalStatus === 'Pending' || approval.approvalStatus === 'Query Raised'
+  ).length;
+  const approvedServiceApprovalCount = patientServiceApprovals.filter(
+    (approval) => approval.approvalStatus === 'Approved'
+  ).length;
 
   const filteredPatients = assignedPatients.filter((p) => {
     const matchesSearch =
@@ -250,7 +256,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
     const request = addInsuranceApproval({
       patientId: selectedPatient.id,
       patientName: `${selectedPatient.firstName} ${selectedPatient.lastName}`,
-      patientMrn: selectedPatient.id,
+      patientMrn: selectedPatient.rgNo || selectedPatient.id,
       insuranceProvider: selectedPatient.insurance.provider,
       policyNumber: selectedPatient.insurance.policyNumber,
       approvalNumber: `REQ-${Date.now()}`,
@@ -605,7 +611,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   }`}
                 >
                   <CircleDollarSign className="w-3.5 h-3.5" />
-                  <span>Services ({patientServices.length})</span>
+                  <span>Facility &amp; insurance ({patientServices.length})</span>
                 </button>
 
                 {canViewPatientBilling && (
@@ -732,10 +738,14 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
               <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="mb-4 flex flex-col justify-between gap-2 border-b border-slate-100 pb-3 sm:flex-row sm:items-center">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Patient Services</h3>
-                    <p className="mt-0.5 text-xs text-slate-500">Add a service, then request insurance authorization for coder review.</p>
+                    <h3 className="text-sm font-bold text-slate-900">Facility Services &amp; Insurance Authorizations</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Record facility care and request payer pre-authorization for medical coder review.</p>
                   </div>
-                  <span className="text-xs text-slate-500">{patientServices.length} services</span>
+                  <div className="flex flex-wrap gap-2 text-[10px] font-semibold">
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">{patientServices.length} services</span>
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{pendingServiceApprovalCount} pending / queried</span>
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-800">{approvedServiceApprovalCount} approved</span>
+                  </div>
                 </div>
 
                 <form onSubmit={handleAddService} className="mb-4 grid grid-cols-1 gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -779,7 +789,13 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                               {service.serviceCode && <span className="font-mono text-[10px] text-slate-500">{service.serviceCode}</span>}
                             </div>
                             <p className="mt-1 text-[11px] text-slate-600">Estimated ${service.estimatedCost.toFixed(2)} · Added by {service.addedBy} · {new Date(service.addedAt).toLocaleDateString()}</p>
-                            {approval && <p className="mt-1 text-[10px] text-slate-500">{approval.approvalNumber} · {approval.insuranceProvider}{approval.remarks ? ` · ${approval.remarks}` : ''}</p>}
+                            {approval && (
+                              <div className="mt-1 space-y-0.5 text-[10px] text-slate-500">
+                                <p>{approval.approvalNumber || 'Authorization pending'} · {approval.insuranceProvider} · Policy {approval.policyNumber || 'not recorded'}</p>
+                                {approval.approvalStatus === 'Approved' && <p>Approved ${approval.approvedAmount.toFixed(2)} · {approval.copayPercentage}% copay (${approval.copayAmount.toFixed(2)}) · Valid until {approval.validUntil || 'not specified'}</p>}
+                                {approval.remarks && <p>{approval.remarks}</p>}
+                              </div>
+                            )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             {approval && approval.approvalStatus !== 'Rejected' ? (
