@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   DollarSign,
   Search,
@@ -10,27 +10,53 @@ import {
   Sparkles,
   Printer,
   ShieldCheck,
+  Pencil,
+  Plus,
+  Save,
+  X,
+  Trash2,
 } from 'lucide-react';
-import { initialHospitalPriceCatalog } from '../data/hospitalPriceCatalog';
+import { useHospital } from '../context/HospitalContext';
 import { HospitalPriceItem } from '../types';
 
+const categories: HospitalPriceItem['category'][] = [
+  'Consultation',
+  'Diagnostic Lab',
+  'Radiology & Imaging',
+  'Ward & Nursing',
+  'Surgical Procedure',
+  'Dermatology Procedure',
+  'Injection & Administration',
+  'Physiotherapy',
+  'Emergency Care',
+  'Medication',
+];
+
+const emptyItem = (): HospitalPriceItem => ({
+  id: `PRC-${Date.now()}`,
+  code: '',
+  name: '',
+  category: 'Diagnostic Lab',
+  department: '',
+  applicableType: 'Both IPD & OPD',
+  standardPrice: 0,
+  insuranceCoveredApprox: 80,
+  copayEst: 0,
+  cptCode: '',
+  description: '',
+});
+
 export const HospitalPriceListView: React.FC = () => {
+  const { hospitalPriceCatalog, pharmacy, currentRole, saveHospitalPriceItem, deactivateHospitalPriceItem } = useHospital();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedDivision, setSelectedDivision] = useState<'all' | 'Inpatient Only' | 'Outpatient Only'>('all');
+  const [editingItem, setEditingItem] = useState<HospitalPriceItem | null>(null);
+  const [itemForm, setItemForm] = useState<HospitalPriceItem>(emptyItem);
+  const [formError, setFormError] = useState('');
+  const canManageCatalog = currentRole === 'admin';
 
-  const categories = [
-    'all',
-    'Consultation',
-    'Diagnostic Lab',
-    'Radiology & Imaging',
-    'Ward & Nursing',
-    'Surgical Procedure',
-    'Emergency Care',
-    'Medication',
-  ];
-
-  const filteredItems = initialHospitalPriceCatalog.filter((item) => {
+  const filteredItems = useMemo(() => hospitalPriceCatalog.filter((item) => {
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -47,10 +73,29 @@ export const HospitalPriceListView: React.FC = () => {
       item.applicableType === selectedDivision;
 
     return matchesSearch && matchesCategory && matchesDivision;
-  });
+  }), [hospitalPriceCatalog, searchQuery, selectedCategory, selectedDivision]);
+  const filteredMedicine = pharmacy.filter((item) =>
+    `${item.sku} ${item.name} ${item.genericName}`.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const saveItem = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!itemForm.name.trim() || !itemForm.code.trim() || !itemForm.department.trim() ||
+      !Number.isFinite(itemForm.standardPrice) || itemForm.standardPrice < 0) {
+      setFormError('Enter service name, unique service code, department, and a non-negative AED price.');
+      return;
+    }
+    saveHospitalPriceItem({
+      ...itemForm,
+      copayEst: itemForm.standardPrice * (100 - itemForm.insuranceCoveredApprox) / 100,
+    });
+    setEditingItem(null);
+    setItemForm(emptyItem());
+    setFormError('');
   };
 
   return (
@@ -75,6 +120,14 @@ export const HospitalPriceListView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {canManageCatalog && (
+            <button
+              onClick={() => { setEditingItem(null); setItemForm(emptyItem()); setFormError(''); }}
+              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add tariff item
+            </button>
+          )}
           <button
             onClick={handlePrint}
             className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
@@ -84,6 +137,31 @@ export const HospitalPriceListView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {canManageCatalog && (
+        <form onSubmit={saveItem} className="rounded-xl border border-indigo-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-900">{editingItem ? `Edit ${editingItem.code}` : 'Add service or procedure to tariff catalog'}</h3>
+            <button type="button" onClick={() => { setEditingItem(null); setItemForm(emptyItem()); setFormError(''); }} aria-label="Clear tariff form" className="rounded p-1 text-slate-400 hover:bg-slate-100">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-[10px] font-semibold text-slate-600">Service code<input required value={itemForm.code} onChange={(event) => setItemForm({ ...itemForm, code: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" placeholder="e.g. DERM-BIOPSY" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">CPT / billing code<input value={itemForm.cptCode || ''} onChange={(event) => setItemForm({ ...itemForm, cptCode: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" placeholder="Use an applicable verified code" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">Service name<input required value={itemForm.name} onChange={(event) => setItemForm({ ...itemForm, name: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">Category<select value={itemForm.category} onChange={(event) => setItemForm({ ...itemForm, category: event.target.value as HospitalPriceItem['category'] })} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs">{categories.map((category) => <option key={category}>{category}</option>)}</select></label>
+            <label className="text-[10px] font-semibold text-slate-600">Department<input required value={itemForm.department} onChange={(event) => setItemForm({ ...itemForm, department: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">Standard price (AED)<input required type="number" min="0" step="0.01" value={itemForm.standardPrice} onChange={(event) => setItemForm({ ...itemForm, standardPrice: Number(event.target.value) })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">Usual insurer share (%)<input type="number" min="0" max="100" value={itemForm.insuranceCoveredApprox} onChange={(event) => setItemForm({ ...itemForm, insuranceCoveredApprox: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" /></label>
+            <label className="text-[10px] font-semibold text-slate-600">Applicable division<select value={itemForm.applicableType} onChange={(event) => setItemForm({ ...itemForm, applicableType: event.target.value as HospitalPriceItem['applicableType'] })} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs"><option>Both IPD &amp; OPD</option><option>Outpatient Only</option><option>Inpatient Only</option></select></label>
+            <label className="text-[10px] font-semibold text-slate-600 sm:col-span-2 lg:col-span-3">Description / billing notes<textarea rows={2} value={itemForm.description} onChange={(event) => setItemForm({ ...itemForm, description: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-2 text-xs" /></label>
+            <div className="flex items-end"><button type="submit" className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500"><Save className="h-3.5 w-3.5" /> Save tariff</button></div>
+          </div>
+          {formError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{formError}</p>}
+          <p className="mt-2 text-[10px] text-amber-700">Verify CPT and payer-specific fee schedules with your coding/billing team before use; these are configurable facility tariffs, not payer guarantees.</p>
+        </form>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 space-y-3">
@@ -124,7 +202,7 @@ export const HospitalPriceListView: React.FC = () => {
         {/* Categories Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
           <span className="text-[11px] font-semibold text-slate-400 shrink-0">Category:</span>
-          {categories.map((cat) => (
+          {['all', ...categories].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
@@ -164,13 +242,14 @@ export const HospitalPriceListView: React.FC = () => {
                 <th className="py-2.5 px-3">Category</th>
                 <th className="py-2.5 px-3">Applicable Division</th>
                 <th className="py-2.5 px-3">Insurance Coverage</th>
-                <th className="py-2.5 px-3 text-right">Standard Fee ($)</th>
+                <th className="py-2.5 px-3 text-right">Standard Fee (AED)</th>
+                {canManageCatalog && <th className="py-2.5 px-3 text-right">Manage</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={canManageCatalog ? 8 : 7} className="py-8 text-center text-slate-400">
                     No tariff items found matching current search or filters.
                   </td>
                 </tr>
@@ -211,8 +290,12 @@ export const HospitalPriceListView: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-2.5 px-3 whitespace-nowrap text-right font-mono font-bold text-slate-900 text-xs">
-                      ${item.standardPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      AED {item.standardPrice.toLocaleString('en-AE', { minimumFractionDigits: 2 })}
                     </td>
+                    {canManageCatalog && <td className="py-2.5 px-3 whitespace-nowrap text-right">
+                      <button type="button" onClick={() => { setEditingItem(item); setItemForm({ ...item }); setFormError(''); }} aria-label={`Edit ${item.name}`} className="rounded p-1.5 text-indigo-600 hover:bg-indigo-50"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { if (window.confirm(`Remove ${item.name} from the tariff catalog? Existing invoices retain their saved prices.`)) deactivateHospitalPriceItem(item.id); }} aria-label={`Remove ${item.name}`} className="rounded p-1.5 text-rose-600 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>}
                   </tr>
                 ))
               )}
@@ -226,10 +309,39 @@ export const HospitalPriceListView: React.FC = () => {
             <span>CMS Hospital Price Transparency Compliant (45 CFR Part 180)</span>
           </div>
           <span className="font-mono text-[10px] text-slate-400">
-            TOTAL CATALOGUED SERVICES: {initialHospitalPriceCatalog.length}
+            TOTAL CATALOGUED SERVICES: {hospitalPriceCatalog.length}
           </span>
         </div>
       </div>
+
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 p-3.5">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-emerald-600" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">Medicine inventory &amp; unit prices</h3>
+          </div>
+          <span className="text-[10px] text-slate-500">Prescription selection uses pharmacy stock items and SKU, not CPT codes.</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-white text-[10px] font-bold uppercase text-slate-500">
+              <tr><th className="px-3 py-2">SKU</th><th className="px-3 py-2">Medicine / generic name</th><th className="px-3 py-2">Form / strength</th><th className="px-3 py-2 text-right">Unit price (AED)</th><th className="px-3 py-2 text-right">Stock</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredMedicine.map((medicine) => (
+                <tr key={medicine.id}>
+                  <td className="px-3 py-2 font-mono font-semibold text-indigo-700">{medicine.sku}</td>
+                  <td className="px-3 py-2"><span className="font-semibold text-slate-800">{medicine.name}</span><span className="ml-1 text-slate-500">({medicine.genericName})</span></td>
+                  <td className="px-3 py-2 text-slate-600">{medicine.dosageForm}</td>
+                  <td className="px-3 py-2 text-right font-mono">AED {medicine.unitPrice.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right text-slate-600">{medicine.stockQuantity}</td>
+                </tr>
+              ))}
+              {filteredMedicine.length === 0 && <tr><td colSpan={5} className="px-3 py-5 text-center text-slate-400">No medicines match this search.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 };

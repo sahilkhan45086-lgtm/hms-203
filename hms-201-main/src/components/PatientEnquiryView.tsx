@@ -47,7 +47,13 @@ export const PatientEnquiryView: React.FC = () => {
 
   const patientAppointments = appointments.filter((a) => a.patientId === selectedPatient?.id);
   const patientInvoices = invoices.filter((i) => i.patientId === selectedPatient?.id);
-  const patientTokens = receptionTokens.filter((token) => token.patientId === selectedPatient?.id);
+  const patientTokens = receptionTokens
+    .filter((token) => token.patientId === selectedPatient?.id)
+    .sort((first, second) =>
+      `${second.visitDate || second.createdDate || ''} ${second.createdTime}`.localeCompare(
+        `${first.visitDate || first.createdDate || ''} ${first.createdTime}`
+      )
+    );
   const latestToken = patientTokens[0] || null;
   const visitEntries = [
     ...(selectedPatient?.facilityVisits || []).map((visit) => ({
@@ -526,6 +532,139 @@ export const PatientEnquiryView: React.FC = () => {
                         <span className="font-bold text-slate-800">{latestInvoice ? formatDateTime(latestInvoice.createdAt || `${latestInvoice.issueDate}T${latestInvoice.invoiceTime || '00:00:00'}`) : 'No invoice recorded'}</span>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h5 className="text-[11px] font-bold uppercase tracking-wider text-indigo-800">Token Visit History</h5>
+                      <span className="text-[10px] font-bold text-indigo-700">{patientTokens.length} visits</span>
+                    </div>
+                    {patientTokens.length === 0 ? (
+                      <p className="text-xs text-slate-500">No token visits recorded for this patient.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {patientTokens.map((token) => {
+                          const tokenNotes = (selectedPatient?.clinicalNotes || []).filter((note) => note.encounterTokenId === token.id);
+                          const tokenServices = (selectedPatient?.services || []).filter((service) => service.encounterTokenId === token.id);
+                          const tokenLabs = (selectedPatient?.labResults || []).filter((lab) => lab.encounterTokenId === token.id);
+                          const tokenPrescriptions = (selectedPatient?.prescriptions || []).filter((rx) => rx.encounterTokenId === token.id);
+                          const tokenInvoices = patientInvoices.filter(
+                            (invoice) => invoice.encounterTokenId === token.id || invoice.id === token.billingSummary?.invoiceId
+                          );
+                          const visitDate = token.visitDate || token.createdDate || 'Date not recorded';
+
+                          return (
+                            <details key={token.id} className="rounded-lg border border-indigo-200 bg-white">
+                              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 p-3">
+                                <span className="font-bold text-[11px] text-slate-800">
+                                  Token {token.tokenNumber} · {token.visitCode || token.visitType || token.serviceType}
+                                </span>
+                                <span className="text-[10px] text-slate-600">{visitDate} · {token.status}</span>
+                              </summary>
+                              <div className="space-y-3 border-t border-slate-100 p-3 text-[11px] text-slate-700">
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                  <div><span className="font-bold">Purpose / complaint:</span> {token.visitPurpose || token.visitComplaint || token.patientVisitSummary || token.doctorOrders?.chiefComplaint || 'Not recorded'}</div>
+                                  <div><span className="font-bold">Department / doctor:</span> {token.department} · {token.doctorName || token.doctorOrders?.orderedByDoctorName || 'Not assigned'}</div>
+                                  <div><span className="font-bold">Registered:</span> {token.createdTime} · {token.registeredBy || 'User not recorded'}</div>
+                                  <div><span className="font-bold">Workflow:</span> {token.currentStage?.replace(/^\d_/, '').replaceAll('_', ' ') || token.status} · {token.counterOrRoom}</div>
+                                </div>
+
+                                {token.vitals && (
+                                  <section className="rounded-lg bg-emerald-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-emerald-800">Nursing notes & vitals · {token.vitals.nurseName}</h6>
+                                    <p>
+                                      BP {token.vitals.bpSystolic}/{token.vitals.bpDiastolic} · HR {token.vitals.heartRate} · SpO₂ {token.vitals.spO2}% · Temp {token.vitals.temperature}° · RR {token.vitals.respiratoryRate}
+                                      {token.vitals.bloodGlucose !== undefined ? ` · Glucose ${token.vitals.bloodGlucose}` : ''}
+                                      {token.vitals.painScale !== undefined ? ` · Pain ${token.vitals.painScale}/10` : ''}
+                                      {' · '}{token.vitals.triageLevel}
+                                    </p>
+                                    {token.vitals.nursingNotes && <p className="mt-1 whitespace-pre-wrap">{token.vitals.nursingNotes}</p>}
+                                  </section>
+                                )}
+
+                                {token.doctorOrders && (
+                                  <section className="rounded-lg bg-blue-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-blue-800">Doctor consultation · {token.doctorOrders.orderedByDoctorName} · {token.doctorOrders.orderedAt}</h6>
+                                    {token.doctorOrders.healthSummary && <p><span className="font-semibold">Summary:</span> {token.doctorOrders.healthSummary}</p>}
+                                    {token.doctorOrders.clinicalAssessment && <p><span className="font-semibold">Assessment:</span> {token.doctorOrders.clinicalAssessment}</p>}
+                                    {token.doctorOrders.doctorNotes && <p className="whitespace-pre-wrap"><span className="font-semibold">Doctor notes:</span> {token.doctorOrders.doctorNotes}</p>}
+                                    <p className="mt-1 font-semibold">Diagnoses</p>
+                                    {token.doctorOrders.diagnoses.length ? (
+                                      <ul className="list-inside list-disc">{token.doctorOrders.diagnoses.map((diagnosis, index) => <li key={`${diagnosis.code}-${index}`}>{diagnosis.code} · {diagnosis.description}{diagnosis.notes ? ` — ${diagnosis.notes}` : ''}</li>)}</ul>
+                                    ) : <p>No diagnoses recorded.</p>}
+                                    {token.doctorOrders.labRequests.length > 0 && <p className="mt-1"><span className="font-semibold">Lab orders:</span> {token.doctorOrders.labRequests.map((order) => `${order.testName} (${order.status})`).join(', ')}</p>}
+                                    {token.doctorOrders.radiologyRequests.length > 0 && <p><span className="font-semibold">Radiology orders:</span> {token.doctorOrders.radiologyRequests.map((order) => `${order.studyName} (${order.status})`).join(', ')}</p>}
+                                    {token.doctorOrders.procedureRequests.length > 0 && <p><span className="font-semibold">Procedures:</span> {token.doctorOrders.procedureRequests.map((order) => `${order.procedureName} (${order.status})`).join(', ')}</p>}
+                                  </section>
+                                )}
+
+                                {tokenNotes.length > 0 && (
+                                  <section className="rounded-lg bg-slate-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-slate-800">Medical notes & reports</h6>
+                                    {tokenNotes.map((note) => <div key={note.id} className="mb-2 last:mb-0">
+                                      <p className="font-semibold">{note.category || 'Clinical note'} · {note.date} · {note.authorName || note.doctorName || 'Clinician'}</p>
+                                      {note.chiefComplaint && <p>Complaint: {note.chiefComplaint}</p>}
+                                      {(note.content || note.assessment) && <p className="whitespace-pre-wrap">Assessment: {note.content || note.assessment}</p>}
+                                      {note.diagnoses?.length ? <p>Diagnoses: {note.diagnoses.join(', ')}</p> : null}
+                                      {note.treatmentPlan && <p className="whitespace-pre-wrap">Plan: {note.treatmentPlan}</p>}
+                                    </div>)}
+                                  </section>
+                                )}
+
+                                {(token.diagnosticReports?.length || tokenLabs.length) ? (
+                                  <section className="rounded-lg bg-violet-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-violet-800">Laboratory & radiology reports</h6>
+                                    {(token.diagnosticReports || []).map((report) => (
+                                      <div key={report.id} className="mb-2 last:mb-0">
+                                        <p className="font-semibold">{report.department} · {report.testOrStudyName} · {report.status} · {report.date} {report.time || ''}</p>
+                                        {report.findings && <p className="whitespace-pre-wrap">Findings: {report.findings}</p>}
+                                        {report.impression && <p>Impression: {report.impression}</p>}
+                                        {report.resultValue && <p>Result: {report.resultValue}{report.referenceRange ? ` (Reference: ${report.referenceRange})` : ''}</p>}
+                                        <p>Reported by {report.technicianOrRadiologist}</p>
+                                      </div>
+                                    ))}
+                                    {tokenLabs.map((lab) => (
+                                      <div key={lab.id} className="mb-2 last:mb-0">
+                                        <p className="font-semibold">{lab.department || lab.category} · {lab.testName} · {lab.status} · {lab.resultDate || lab.orderedDate}</p>
+                                        <p>Result: {lab.value}{lab.referenceRange ? ` (Reference: ${lab.referenceRange})` : ''}</p>
+                                        {lab.findings && <p>Findings: {lab.findings}</p>}
+                                        {lab.impression && <p>Impression: {lab.impression}</p>}
+                                      </div>
+                                    ))}
+                                  </section>
+                                ) : null}
+
+                                {(tokenServices.length > 0 || tokenInvoices.length > 0 || token.billingSummary) && (
+                                  <section className="rounded-lg bg-amber-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-amber-800">Services & billing</h6>
+                                    {tokenServices.map((service) => <p key={service.id}>{service.name} · {service.category} · AED {Number(service.estimatedCost).toFixed(2)} · added by {service.addedBy}</p>)}
+                                    {tokenInvoices.map((invoice) => <div key={invoice.id}>
+                                      <p className="font-semibold">Invoice {invoice.id} · {invoice.status} · AED {Number(invoice.totalAmount ?? invoice.subtotal ?? 0).toFixed(2)}</p>
+                                      <p>{invoice.items.map((item) => `${item.description} × ${item.quantity}`).join(', ') || 'No invoice items'}</p>
+                                    </div>)}
+                                    {token.billingSummary && <p className="mt-1">Payment: {token.billingSummary.paymentStatus} · {token.billingSummary.paymentMethod} · Paid AED {Number(token.billingSummary.totalPaid).toFixed(2)} · Balance AED {Number(token.billingSummary.balanceDue).toFixed(2)} · Cashier {token.billingSummary.cashierName}</p>}
+                                  </section>
+                                )}
+
+                                {tokenPrescriptions.length > 0 && (
+                                  <section className="rounded-lg bg-cyan-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-cyan-800">Prescriptions</h6>
+                                    {tokenPrescriptions.map((rx) => <p key={rx.id}>{rx.name} · {rx.dosage} · {rx.frequency} · {rx.route}{rx.duration ? ` · ${rx.duration}` : ''}{rx.instructions ? ` · ${rx.instructions}` : ''} · {rx.status} · prescribed by {rx.prescribedBy}</p>)}
+                                  </section>
+                                )}
+
+                                {token.historyLogs && token.historyLogs.length > 0 && (
+                                  <section className="rounded-lg bg-slate-50 p-2.5">
+                                    <h6 className="mb-1 font-bold text-slate-800">Visit activity</h6>
+                                    <ul className="space-y-1">{token.historyLogs.map((log, index) => <li key={`${log.timestamp}-${index}`}>{log.timestamp} · {log.stage.replace(/^\d_/, '').replaceAll('_', ' ')} · {log.action} · {log.actor}</li>)}</ul>
+                                  </section>
+                                )}
+                              </div>
+                            </details>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

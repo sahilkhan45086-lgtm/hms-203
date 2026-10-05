@@ -34,11 +34,15 @@ import {
   TokenDoctorOrder,
   TokenBillingSummary,
   TokenDiagnosticReport,
+  TokenServiceItem,
   DoctorDutyChangeRequest,
   DoctorDutySchedule,
   StaffDutySchedule,
+  HospitalPriceItem,
 } from '../types';
 import { getPatientPhoto } from '../utils/patientImages';
+import { parseInsuranceDeductible, sumInvoiceItemField } from '../utils/insuranceInvoice';
+import { initialHospitalPriceCatalog } from '../data/hospitalPriceCatalog';
 import {
   initialPatients,
   initialDoctors,
@@ -234,6 +238,9 @@ interface HospitalContextType {
   wardBeds: WardBed[];
   staff: StaffMember[];
   pharmacy: PharmacyItem[];
+  hospitalPriceCatalog: HospitalPriceItem[];
+  saveHospitalPriceItem: (item: HospitalPriceItem) => void;
+  deactivateHospitalPriceItem: (itemId: string) => void;
   auditLogs: AuditLog[];
   compliance: SystemCompliance;
   notifications: LiveNotification[];
@@ -292,10 +299,10 @@ interface HospitalContextType {
   updateInsuranceApprovalStatus: (id: string, status: Exclude<InsuranceApproval['approvalStatus'], 'Approved'>, remarks?: string) => void;
   publishInsuranceApproval: (id: string, details: Pick<InsuranceApproval, 'approvalNumber' | 'approvedAmount' | 'copayPercentage' | 'validUntil'>) => void;
   addPosTransaction: (data: Omit<PosTransaction, 'id' | 'rrnNumber'>) => PosTransaction;
-  createReceptionToken: (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdTime'>) => ReceptionToken;
+  createReceptionToken: (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdTime'>) => ReceptionToken | null;
   updateReceptionTokenStatus: (id: string, status: ReceptionToken['status']) => void;
   advanceTokenWorkflow: (tokenId: string, nextStage: TokenWorkflowStage, updates?: Partial<ReceptionToken>) => void;
-  updateTokenVitals: (tokenId: string, vitals: TokenVitalsRecord) => void;
+  updateTokenVitals: (tokenId: string, vitals: TokenVitalsRecord, serviceItems?: TokenServiceItem[]) => void;
   updateTokenDoctorOrders: (tokenId: string, orders: TokenDoctorOrder) => void;
   settleTokenBilling: (tokenId: string, billing: TokenBillingSummary) => void;
   completeTokenDiagnosticReport: (tokenId: string, report: TokenDiagnosticReport) => void;
@@ -368,6 +375,7 @@ const STORAGE_KEYS = {
   WARD_BEDS: 'medcore_ward_beds_v3',
   STAFF: 'medcore_staff_v3',
   PHARMACY: 'medcore_pharmacy_v3',
+  HOSPITAL_PRICE_CATALOG: 'medcore_hospital_price_catalog_v1',
   AUDIT_LOGS: 'medcore_audit_logs_v3',
   COMPLIANCE: 'medcore_compliance_v3',
   NOTIFICATIONS: 'medcore_notifications_v3',
@@ -388,13 +396,17 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const parsed = JSON.parse(saved) as Patient[];
         return parsed.map((p) => ({
           ...p,
+          rgNo: p.rgNo || p.id,
           avatar: p.avatar || getPatientPhoto(p.id, `${p.firstName} ${p.lastName}`, p.gender),
         }));
       } catch (e) {
         return initialPatients;
       }
     }
-    return initialPatients;
+    return initialPatients.map((patient) => ({
+      ...patient,
+      rgNo: patient.rgNo || patient.id,
+    }));
   });
 
   const [doctors, setDoctors] = useState<Doctor[]>(() => {
@@ -532,6 +544,17 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [pharmacy, setPharmacy] = useState<PharmacyItem[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.PHARMACY);
     return saved ? JSON.parse(saved) : initialPharmacy;
+  });
+
+  const [hospitalPriceCatalog, setHospitalPriceCatalog] = useState<HospitalPriceItem[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.HOSPITAL_PRICE_CATALOG);
+    if (!saved) return initialHospitalPriceCatalog;
+    try {
+      const parsed = JSON.parse(saved) as HospitalPriceItem[];
+      return Array.isArray(parsed) ? parsed : initialHospitalPriceCatalog;
+    } catch {
+      return initialHospitalPriceCatalog;
+    }
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
@@ -672,6 +695,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PHARMACY, JSON.stringify(pharmacy));
   }, [pharmacy]);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.HOSPITAL_PRICE_CATALOG, JSON.stringify(hospitalPriceCatalog));
+  }, [hospitalPriceCatalog]);
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(auditLogs));
   }, [auditLogs]);
@@ -922,6 +948,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const newPatient: Patient = {
       ...patientData,
       id: newId,
+      rgNo: patientData.rgNo?.trim() || `RG${nextNum}`,
       vitals: [],
       medications: [],
       labResults: [],
@@ -999,6 +1026,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             policyNumber: newPatient.insurance.policyNumber,
             network: newPatient.insurance.network,
             coveragePercent: newPatient.insurance.coveragePercentage,
+            serviceCopay: newPatient.insurance.serviceCopay,
+            deductibleAmount: newPatient.insurance.deductibleAmount ||
+              parseInsuranceDeductible(newPatient.insuranceList?.find((record) => record.isPrimary)?.copayDeductible),
             preAuthStatus: newPatient.insurance.requiresPreAuthorization ? 'Pending' : 'Not Required',
           }
         : newPatient.payMode === 'Discount Card'
@@ -1019,6 +1049,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         },
       ],
     });
+    if (!registrationToken) {
+      throw new Error('A new patient registration unexpectedly matched an existing consultation token.');
+    }
 
     if (newPatient.wardOrRoom) {
       setWardBeds((prev) =>
@@ -1066,6 +1099,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           return {
             ...p,
             ...updates,
+            rgNo: p.rgNo || p.id,
             updatedAt: new Date().toISOString(),
           };
         }
@@ -1414,6 +1448,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       duration: rx.duration,
       instructions: rx.instructions,
       prescribedBy: rx.prescribedBy || currentUser.name,
+      encounterTokenId: rx.encounterTokenId,
       startDate: new Date().toISOString().split('T')[0],
       status: 'Active',
     });
@@ -1573,9 +1608,13 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       (sum, item) => sum + (Number(item.amount ?? item.totalPrice) || 0),
       0
     );
+    const hasInsuranceBreakdown = invData.items.some((item) => item.insuranceAmount !== undefined);
+    const netTotal = hasInsuranceBreakdown ? sumInvoiceItemField(invData.items, 'netAmount') : subtotal;
     const insuranceCovered = Number(invData.insuranceCoveredAmount ?? invData.insuranceCovered) || 0;
     const copay = Number(invData.copayAmount) || 0;
-    const patientPayable = Math.max(0, subtotal - insuranceCovered + copay);
+    const patientPayable = hasInsuranceBreakdown
+      ? Math.max(0, netTotal - insuranceCovered)
+      : Math.max(0, subtotal - insuranceCovered + copay);
     const sanitizedItems: BillItem[] = invData.items.map((it) => {
       const amt = Number(it.amount ?? it.totalPrice) || 0;
       return {
@@ -1596,11 +1635,12 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       items: sanitizedItems,
       subtotal,
       tax: 0,
-      totalAmount: subtotal,
+      totalAmount: netTotal,
       paidAmount: 0,
       insuranceCoveredAmount: insuranceCovered,
       insuranceCovered,
       copayAmount: copay,
+      deductibleAmount: Number(invData.deductibleAmount) || 0,
       patientPayable,
       amountPaid: 0,
       balanceDue: patientPayable,
@@ -2163,12 +2203,43 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return newRecord;
   };
 
-  const createReceptionToken = (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdDate' | 'createdTime'>): ReceptionToken => {
+  const createReceptionToken = (data: Omit<ReceptionToken, 'id' | 'tokenNumber' | 'createdDate' | 'createdTime'>): ReceptionToken | null => {
     const now = new Date();
     const nowDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const nowTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     const todaysTokens = receptionTokens.filter((token) => (token.createdDate || token.visitDate) === nowDate);
-    const tokenNumber = String(todaysTokens.length + 1).padStart(2, '0');
+    const visitDate = data.visitDate || nowDate;
+    const assignedProviderName = normalizeClinicianName(data.doctorName || '');
+    const isDoctorVisitType = ['Consultation', 'Billing & Cashier', 'Physio Technician'].includes(data.serviceType);
+    const existingDoctorToken = isDoctorVisitType && data.patientId !== 'WALK-IN'
+      ? receptionTokens.find((token) => {
+          const samePatient = token.patientId === data.patientId;
+          const sameVisitDate = (token.visitDate || token.createdDate) === visitDate;
+          const sameTokenType = token.serviceType === data.serviceType;
+          const isNotCancelled = token.status !== 'Cancelled';
+          const sameDepartment = (token.department || '').trim().toLowerCase() === (data.department || '').trim().toLowerCase();
+          const sameProvider = data.doctorId && token.doctorId
+            ? data.doctorId === token.doctorId
+            : assignedProviderName.length > 0 &&
+              assignedProviderName === normalizeClinicianName(token.doctorName || '');
+          return samePatient && sameVisitDate && sameTokenType && isNotCancelled && sameProvider && sameDepartment;
+        })
+      : undefined;
+    if (existingDoctorToken) {
+      addNotification(
+        'Visit Already Registered',
+        `${data.patientName} already has a ${data.serviceType} token (${existingDoctorToken.tokenNumber}) for ${data.doctorName || existingDoctorToken.doctorName} in ${data.department} on ${visitDate} at ${existingDoctorToken.createdTime || 'time not recorded'}.`,
+        'warning',
+        data.patientId
+      );
+      return null;
+    }
+
+    const highestTodayToken = todaysTokens.reduce((highest, token) => {
+      const parsedNumber = Number(token.tokenNumber.match(/\d+/)?.[0]);
+      return Number.isFinite(parsedNumber) ? Math.max(highest, parsedNumber) : highest;
+    }, 0);
+    const tokenNumber = String(highestTodayToken + 1).padStart(2, '0');
     const id = `TOK-${nowDate.replace(/-/g, '')}-${tokenNumber}`;
     const patient = patients.find((item) => item.id === data.patientId);
     const newRecord: ReceptionToken = {
@@ -2220,6 +2291,8 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           insuranceCards: patient.insuranceList,
         } : {}),
         ...data.patientDetails,
+        registrationNumber:
+          patient?.rgNo || patient?.id || data.patientDetails?.registrationNumber || data.patientId,
       },
       id,
       tokenNumber,
@@ -2236,20 +2309,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       visitCode: data.visitCode || (data.serviceType === 'Consultation' ? 'C' : data.serviceType === 'Physio Technician' ? 'TEC' : 'NC'),
       registeredBy: data.registeredBy || currentUser?.name || 'Hospital Staff',
     };
-    setReceptionTokens((prev) => {
-      const todayTokens = prev.filter((token) => (token.createdDate || token.visitDate) === nowDate);
-      const tokenNumbers = new Map(todayTokens.map((token, index) => [
-        token.id,
-        String(todayTokens.length - index).padStart(2, '0'),
-      ]));
-      return [
-        newRecord,
-        ...prev.map((token) => tokenNumbers.has(token.id)
-          ? { ...token, tokenNumber: tokenNumbers.get(token.id) || token.tokenNumber }
-          : token
-        ),
-      ];
-    });
+    setReceptionTokens((prev) => [newRecord, ...prev]);
     addNotification(
       'Queue Token Generated',
       `Token ${tokenNumber} issued to ${data.patientName} for ${data.department} (${data.counterOrRoom}).`,
@@ -2335,23 +2395,25 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addNotification('Token Workflow Advanced', `Token ${tokenId} moved to next clinical stage.`, 'info');
   };
 
-  const updateTokenVitals = (tokenId: string, vitals: TokenVitalsRecord) => {
+  const updateTokenVitals = (tokenId: string, vitals: TokenVitalsRecord, serviceItems?: TokenServiceItem[]) => {
     const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     setReceptionTokens((prev) =>
       prev.map((tok) => {
         if (tok.id === tokenId) {
+          const needsCashier = tok.serviceType === 'Billing & Cashier' || tok.serviceType === 'Physio Technician';
           const logItem = {
             stage: '2_NURSING_VITALS' as TokenWorkflowStage,
             timestamp: now,
-            action: `Vitals recorded: BP ${vitals.bpSystolic}/${vitals.bpDiastolic}, HR ${vitals.heartRate}, SpO2 ${vitals.spO2}%, Triage ${vitals.triageLevel}`,
+            action: `Vitals recorded: BP ${vitals.bpSystolic}/${vitals.bpDiastolic}, HR ${vitals.heartRate}, SpO2 ${vitals.spO2}%, Triage ${vitals.triageLevel}${serviceItems?.length ? `. ${serviceItems.length} billable service(s) added.` : ''}`,
             actor: vitals.nurseName,
           };
           return {
             ...tok,
             vitals,
-            currentStage: '3_DOCTOR_EMR', // Auto-advances to Doctor EMR!
+            ...(serviceItems ? { serviceItems } : {}),
+            currentStage: needsCashier ? '4_CASHIER_BILLING' : '3_DOCTOR_EMR',
             status: 'Waiting',
-            counterOrRoom: 'Doctor Consultation Suite',
+            counterOrRoom: needsCashier ? 'Cashier Counter' : 'Doctor Consultation Suite',
             historyLogs: tok.historyLogs ? [...tok.historyLogs, logItem] : [logItem],
           };
         }
@@ -2497,9 +2559,10 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const targetToken = receptionTokens.find((t) => t.id === tokenId);
     if (targetToken && targetToken.patientId && targetToken.patientId !== 'WALK-IN') {
       const newLabResult: Omit<LabResult, 'id'> = {
+        encounterTokenId: targetToken.id,
         testName: report.testOrStudyName,
         category: report.department === 'Radiology' ? 'Radiology' : report.department === 'Cardiology / Procedures' ? 'Cardiology' : 'Biochemistry',
-        department: report.department,
+        department: report.department === 'Radiology' ? 'Radiology & Imaging' : report.department,
         cptCode: report.cptOrCode,
         orderedDate: new Date().toISOString().split('T')[0],
         resultDate: new Date().toISOString().split('T')[0],
@@ -2807,6 +2870,37 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addNotification('Catalog Updated', `Added ${newItem.name} to pharmacy stock.`, 'info');
   };
 
+  const saveHospitalPriceItem = (item: HospitalPriceItem) => {
+    const duplicate = hospitalPriceCatalog.find((entry) =>
+      entry.id !== item.id &&
+      (entry.code.trim().toLowerCase() === item.code.trim().toLowerCase() ||
+        (item.cptCode && entry.cptCode?.trim().toLowerCase() === item.cptCode.trim().toLowerCase()))
+    );
+    if (duplicate) {
+      addNotification('Duplicate Catalog Code', `${duplicate.name} already uses this service or CPT code.`, 'warning');
+      return;
+    }
+    if (!item.name.trim() || !item.code.trim() || !Number.isFinite(item.standardPrice) || item.standardPrice < 0) {
+      addNotification('Invalid Catalog Item', 'Enter a service name, unique service code, and a valid non-negative price.', 'warning');
+      return;
+    }
+    const exists = hospitalPriceCatalog.some((entry) => entry.id === item.id);
+    setHospitalPriceCatalog((current) => exists
+      ? current.map((entry) => entry.id === item.id ? { ...item, name: item.name.trim(), code: item.code.trim(), cptCode: item.cptCode?.trim() || undefined } : entry)
+      : [...current, { ...item, name: item.name.trim(), code: item.code.trim(), cptCode: item.cptCode?.trim() || undefined }]);
+    logAuditEvent(exists ? 'UPDATE' : 'CREATE', 'Billing Invoice', item.id, `${exists ? 'Updated' : 'Added'} tariff item ${item.code} — ${item.name}, AED ${item.standardPrice.toFixed(2)}.`);
+  };
+
+  const deactivateHospitalPriceItem = (itemId: string) => {
+    const item = hospitalPriceCatalog.find((catalogItem) => catalogItem.id === itemId);
+    if (!item) {
+      addNotification('Catalog Item Not Found', 'The selected tariff item could not be found.', 'warning');
+      return;
+    }
+    setHospitalPriceCatalog((current) => current.filter((catalogItem) => catalogItem.id !== itemId));
+    logAuditEvent('DELETE', 'Billing Invoice', itemId, `Removed tariff item ${item.code} — ${item.name}.`);
+  };
+
   const resetHospitalData = () => {
     setPatients(initialPatients);
     setDoctors(initialDoctors);
@@ -2818,6 +2912,7 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setWardBeds(initialWardBeds);
     setStaff(initialStaff);
     setPharmacy(initialPharmacy);
+    setHospitalPriceCatalog(initialHospitalPriceCatalog);
     setAuditLogs(initialAuditLogs);
     setCompliance(initialCompliance);
     setAdvancePayments(initialAdvancePayments);
@@ -2909,6 +3004,9 @@ export const HospitalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           wardBeds,
           staff,
           pharmacy,
+          hospitalPriceCatalog,
+          saveHospitalPriceItem,
+          deactivateHospitalPriceItem,
           auditLogs,
         },
         checksum: `CRC32-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,

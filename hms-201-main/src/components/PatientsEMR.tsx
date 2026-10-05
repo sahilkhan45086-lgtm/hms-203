@@ -223,6 +223,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
       duration: rxDuration,
       instructions: rxInstructions,
       prescribedBy: currentUser.name || 'Dr. Julian Thorne, MD',
+      encounterTokenId: currentVisitToken?.id,
       status: 'Active',
     });
 
@@ -440,7 +441,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                       <span>{p.firstName} {p.lastName}</span>
                     </div>
                     <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
-                      {p.id} · {p.age}y · {p.gender}
+                      Reg. No: {p.rgNo || p.id} · {p.age}y · {p.gender}
                     </div>
                     {p.latestTriage && (
                       <div className="text-[10px] mt-1 font-semibold flex items-center gap-1">
@@ -488,7 +489,7 @@ export const PatientsEMR: React.FC<PatientsEMRProps> = ({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <h1 className="truncate text-lg font-bold text-slate-950">{selectedPatient.firstName} {selectedPatient.lastName}</h1>
-                      <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-700">{selectedPatient.id}</span>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-700">Reg. No: {selectedPatient.rgNo || selectedPatient.id}</span>
                     </div>
                     <p className="mt-0.5 text-xs text-slate-600">{selectedPatient.age} years · {selectedPatient.gender} · DOB {selectedPatient.dob}</p>
                     <p className="mt-1 truncate text-[11px] text-slate-500">Attending: {selectedPatient.primaryPhysicianName} · {selectedPatient.insurance.provider || 'Self-pay'}</p>

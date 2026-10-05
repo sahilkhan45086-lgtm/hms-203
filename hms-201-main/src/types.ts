@@ -53,7 +53,7 @@ export interface HospitalPriceItem {
   id: string;
   code: string;
   name: string;
-  category: 'Consultation' | 'Diagnostic Lab' | 'Radiology & Imaging' | 'Ward & Nursing' | 'Surgical Procedure' | 'Emergency Care' | 'Medication';
+  category: 'Consultation' | 'Diagnostic Lab' | 'Radiology & Imaging' | 'Ward & Nursing' | 'Surgical Procedure' | 'Dermatology Procedure' | 'Injection & Administration' | 'Physiotherapy' | 'Emergency Care' | 'Medication';
   department: string;
   applicableType: 'Both IPD & OPD' | 'Outpatient Only' | 'Inpatient Only';
   standardPrice: number;
@@ -65,6 +65,9 @@ export interface HospitalPriceItem {
 
 export interface Medication {
   id: string;
+  catalogCode?: string;
+  unitPrice?: number;
+  encounterTokenId?: string;
   name: string;
   dosage: string;
   frequency: string;
@@ -81,6 +84,7 @@ export type Prescription = Medication;
 
 export interface LabResult {
   id: string;
+  encounterTokenId?: string;
   testName: string;
   category: 'Hematology' | 'Radiology' | 'Biochemistry' | 'Pathology' | 'Cardiology';
   orderedDate: string;
@@ -214,6 +218,7 @@ export interface InsurancePolicy {
     surgicalProcedure?: number;
     emergency: number;
   };
+  deductibleAmount?: number;
   groupNumber: string;
   coveragePercentage: number; // e.g. 80 means 80% covered
   copayAmount: number;
@@ -457,12 +462,20 @@ export interface DoctorDutyChangeRequest {
 
 export interface BillItem {
   id: string;
+  serviceCode?: string;
+  cptCode?: string;
   description: string;
-  category: 'Consultation' | 'Lab Test' | 'Radiology' | 'Pharmacy' | 'Room & Nursing' | 'Surgical Procedure' | 'Cardiology';
+  category: 'Consultation' | 'Lab Test' | 'Radiology' | 'Pharmacy' | 'Room & Nursing' | 'Surgical Procedure' | 'Technician Service' | 'Cardiology';
   unitCost: number;
   quantity: number;
   amount: number;
   totalPrice?: number;
+  discountAmount?: number;
+  netAmount?: number;
+  deductibleAmount?: number;
+  copayPercentage?: number;
+  copayAmount?: number;
+  insuranceAmount?: number;
 }
 
 export type PaymentStatus =
@@ -598,6 +611,8 @@ export interface TokenPaymentScheme {
   network?: string;
   coveragePercent?: number; // e.g. 80
   copayAmount?: number; // e.g. 25
+  deductibleAmount?: number;
+  serviceCopay?: InsurancePolicy['serviceCopay'];
   preAuthStatus?: 'Approved' | 'Pending' | 'Not Required';
   // Discount Card
   discountCardName?: string; // e.g. "Senior Citizen Card (20%)", "Hospital Employee Staff Card (30%)", "Corporate Partner (15%)"
@@ -630,9 +645,10 @@ export interface TokenDoctorOrder {
   chiefComplaint?: string;
   clinicalAssessment?: string;
   diagnoses: Array<{ code: string; description: string; notes?: string }>;
-  labRequests: Array<{ id: string; testName: string; category: string; price: number; status: 'Ordered' | 'Sample Collected' | 'Completed' }>;
-  radiologyRequests: Array<{ id: string; studyName: string; modality: string; price: number; status: 'Ordered' | 'In Progress' | 'Completed' }>;
+  labRequests: Array<{ id: string; testName: string; category: string; cptCode?: string; price: number; status: 'Ordered' | 'Sample Collected' | 'Completed' }>;
+  radiologyRequests: Array<{ id: string; studyName: string; modality: string; cptCode?: string; price: number; status: 'Ordered' | 'In Progress' | 'Completed' }>;
   procedureRequests: Array<{ id: string; cptCode: string; procedureName: string; price: number; status: 'Scheduled' | 'Completed' }>;
+  medicationRequests?: Array<{ id: string; sku: string; medicationName: string; quantity: number; unitPrice: number; price: number }>;
   consultationFee: number;
   doctorNotes?: string;
   orderedByDoctorId: string;
@@ -644,10 +660,13 @@ export interface TokenBillingSummary {
   invoiceId?: string;
   invoiceNumber?: string;
   subtotal: number;
+  items?: BillItem[];
   schemeType: PaymentSchemeType;
   insuranceCoveredAmount: number;
   discountAmount: number;
   copayOrSelfPayAmount: number;
+  copayAmount?: number;
+  deductibleAmount?: number;
   totalPaid: number;
   balanceDue: number;
   paymentMethod: 'Cash' | 'Credit/Debit Card' | 'HSA/FSA' | 'Direct Insurance' | 'Online Gateway';
@@ -660,6 +679,15 @@ export interface TokenBillingSummary {
   dailyInsuranceLimitAed?: number;
   dailyInsuranceUsedBeforeAed?: number;
   dailyInsuranceUsedAfterAed?: number;
+}
+
+export interface TokenServiceItem {
+  id: string;
+  name: string;
+  category: 'Test' | 'Procedure' | 'Technician Service';
+  price: number;
+  addedBy: string;
+  addedAt: string;
 }
 
 export interface TokenDiagnosticReport {
@@ -759,6 +787,7 @@ export interface ReceptionToken {
   currentStage?: TokenWorkflowStage;
   paymentScheme?: TokenPaymentScheme;
   vitals?: TokenVitalsRecord;
+  serviceItems?: TokenServiceItem[];
   doctorOrders?: TokenDoctorOrder;
   billingSummary?: TokenBillingSummary;
   diagnosticReports?: TokenDiagnosticReport[];
@@ -774,6 +803,7 @@ export interface Invoice {
   patientEmail: string;
   appointmentId?: string;
   encounterTokenId?: string;
+  insuranceProvider?: string;
   diagnoses?: Array<{ code: string; description: string; doctorName: string; orderedAt: string }>;
   issueDate: string;
   invoiceTime?: string; // e.g. "10:15:30 AM"
@@ -788,6 +818,7 @@ export interface Invoice {
   insuranceCoveredAmount: number;
   insuranceCovered?: number;
   copayAmount: number;
+  deductibleAmount?: number;
   patientPayable: number;
   amountPaid: number;
   balanceDue: number;

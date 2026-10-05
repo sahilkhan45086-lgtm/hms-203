@@ -126,6 +126,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   const [dhaMemberId, setDhaMemberId] = useState('');
   const [clientNumber, setClientNumber] = useState('');
   const [copayPercent, setCopayPercent] = useState(0);
+  const [deductibleAmount, setDeductibleAmount] = useState('');
   const [registrationType, setRegistrationType] = useState<'Consultation' | 'Non-Consultation' | 'Technician'>('Consultation');
   const [physioTechnician, setPhysioTechnician] = useState('Ahmed Hassan - Physiotherapy Technician');
   const [discountCardName, setDiscountCardName] = useState('');
@@ -228,6 +229,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     setDhaMemberId('');
     setClientNumber('');
     setCopayPercent(0);
+    setDeductibleAmount('');
     setRegistrationType('Consultation');
     setPhysioTechnician('Ahmed Hassan - Physiotherapy Technician');
     setDiscountCardName('');
@@ -314,6 +316,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         setDhaMemberId(existing.insurance?.dhaMemberId || '');
         setClientNumber(existing.insurance?.clientNumber || '');
         setCopayPercent(100 - (existing.insurance?.coveragePercentage ?? 100));
+        setDeductibleAmount(existing.insurance?.deductibleAmount?.toString() || '');
         setServiceCopay(existing.insurance?.serviceCopay || { consultation: 20, dental: 20, procedure: 20, laboratory: 20, lab: 20, radiology: 20, pharmacy: 20, procedures: 20, surgicalProcedure: 20, emergency: 10 });
         setInsuranceCardImage(existing.insuranceCardImage || '');
         setSupportDocumentImage(existing.supportDocumentImage || '');
@@ -509,6 +512,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
           clientNumber: payMode === 'Self' ? undefined : clientNumber.trim() || undefined,
           groupNumber: payMode === 'Self' ? '' : groupNumber.trim(),
           coveragePercentage: payMode === 'Self' ? 0 : Math.max(0, 100 - copayPercent),
+          deductibleAmount: payMode === 'Self' ? 0 : Math.max(0, Number(deductibleAmount) || 0),
           copayAmount: 0,
           expiryDate: insuranceExpiryDate,
           status: 'Pending',
@@ -612,6 +616,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         clientNumber: payMode === 'Self' ? undefined : clientNumber.trim() || undefined,
         groupNumber: payMode === 'Self' ? '' : groupNumber.trim(),
         coveragePercentage: payMode === 'Self' ? 0 : Math.max(0, 100 - copayPercent),
+        deductibleAmount: payMode === 'Self' ? 0 : Math.max(0, Number(deductibleAmount) || 0),
         copayAmount: 0,
         expiryDate: insuranceExpiryDate,
         status: 'Pending',
@@ -1458,7 +1463,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                         <input type="text" value={preExistingWaitingPeriod} onChange={(e) => setPreExistingWaitingPeriod(e.target.value)} placeholder="As stated by insurer / policy" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden" />
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="text-[11px] font-medium text-slate-600 block mb-1">Patient Copay (%)</label>
                         <input
@@ -1469,6 +1474,19 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                           onChange={(e) => setCopayPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
                           className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                         />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-1">Deductible to apply (AED)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={deductibleAmount}
+                          onChange={(event) => setDeductibleAmount(event.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                        />
+                        <span className="mt-1 block text-[9px] text-slate-500">Applied before co-pay on this invoice.</span>
                       </div>
                       <div className="flex items-center gap-1.5 py-2 text-[11px] text-amber-800 font-medium">
                         <AlertCircle className="w-4 h-4 text-amber-600" />

@@ -17,7 +17,7 @@ import { PaymentSchemeType, ReceptionToken } from '../../types';
 import { TokenWorkflowModal } from '../tokens/TokenWorkflowModal';
 
 export const DailyTokensView: React.FC = () => {
-  const { receptionTokens, createReceptionToken, updateReceptionTokenStatus, patients, addNotification } = useHospital();
+  const { receptionTokens, createReceptionToken, updateReceptionTokenStatus, patients, doctors, addNotification } = useHospital();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -31,6 +31,7 @@ export const DailyTokensView: React.FC = () => {
   const [walkinPhone, setWalkinPhone] = useState('+1 (555) 019-2834');
   const [department, setDepartment] = useState('Front Desk Registration');
   const [serviceType, setServiceType] = useState<ReceptionToken['serviceType']>('Consultation');
+  const [doctorId, setDoctorId] = useState(patients[0]?.primaryPhysicianId || '');
   const [counterOrRoom, setCounterOrRoom] = useState('Counter 1 (Main Desk)');
   const [priority, setPriority] = useState<ReceptionToken['priority']>('Normal');
   const [registrationType, setRegistrationType] = useState<'Consultation' | 'Non-Consultation'>('Consultation');
@@ -78,10 +79,18 @@ export const DailyTokensView: React.FC = () => {
       name = 'Anonymous Walk-in Patient';
     }
 
+    const selectedDoctor = doctors.find((doctor) => doctor.id === doctorId);
+    if (registrationType === 'Consultation' && serviceType === 'Consultation' && !selectedDoctor) {
+      addNotification('Select Consultation Doctor', 'Choose the doctor for this consultation before creating the token.', 'warning');
+      return;
+    }
+
     const createdToken = createReceptionToken({
       patientId,
       patientName: name,
       patientPhone: phone,
+      doctorId: registrationType === 'Consultation' && serviceType === 'Consultation' ? selectedDoctor?.id : undefined,
+      doctorName: registrationType === 'Consultation' && serviceType === 'Consultation' ? selectedDoctor?.name : undefined,
       department: registrationType === 'Consultation' ? department : 'Registration & Cashier',
       serviceType: registrationType === 'Consultation' ? serviceType : 'Billing & Cashier',
       counterOrRoom,
@@ -96,6 +105,7 @@ export const DailyTokensView: React.FC = () => {
           ? { schemeType: 'Discount Card', discountCardName: 'Patient Discount Card', discountPercent }
           : { schemeType: 'Self-Pay' },
     });
+    if (!createdToken) return;
 
     addNotification({
       title: `Token ${createdToken.tokenNumber} Issued`,
@@ -294,6 +304,20 @@ export const DailyTokensView: React.FC = () => {
                     <td className="py-2.5 px-3">
                       <div className="font-medium text-slate-800">{token.department}</div>
                       <div className="text-[10px] text-slate-500">{token.serviceType}</div>
+                      {token.serviceItems && token.serviceItems.length > 0 && (
+                        <div className="mt-1 text-[10px] text-teal-700">
+                          Services: {token.serviceItems.map((item) => `${item.name} · AED ${item.price.toFixed(2)}`).join(', ')}
+                        </div>
+                      )}
+                      {token.serviceType === 'Consultation' && token.doctorOrders && (
+                        <div className="mt-1 text-[10px] text-indigo-700">
+                          Doctor orders: {[
+                            ...token.doctorOrders.labRequests.map((item) => item.testName),
+                            ...token.doctorOrders.radiologyRequests.map((item) => item.studyName),
+                            ...token.doctorOrders.procedureRequests.map((item) => item.procedureName),
+                          ].join(', ') || 'Consultation only'}
+                        </div>
+                      )}
                     </td>
 
                     <td className="py-2.5 px-3 whitespace-nowrap font-medium text-slate-700">
@@ -433,12 +457,18 @@ export const DailyTokensView: React.FC = () => {
                   <label className="block font-bold text-slate-700 mb-1">Select Patient</label>
                   <select
                     value={selectedPatientId}
-                    onChange={(e) => setSelectedPatientId(e.target.value)}
+                    onChange={(e) => {
+                      const patientId = e.target.value;
+                      setSelectedPatientId(patientId);
+                      const patient = patients.find((item) => item.id === patientId);
+                      setDoctorId(patient?.primaryPhysicianId || '');
+                      if (patient?.department) setDepartment(patient.department);
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium"
                   >
                     {patients.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.firstName} {p.lastName} (MRN: {p.id})
+                        {p.firstName} {p.lastName} (Reg. no: {p.rgNo || p.id})
                       </option>
                     ))}
                   </select>
@@ -476,6 +506,28 @@ export const DailyTokensView: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {registrationType === 'Consultation' && serviceType === 'Consultation' && (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Consultation Doctor</label>
+                  <select
+                    required
+                    value={doctorId}
+                    onChange={(event) => {
+                      const selected = doctors.find((doctor) => doctor.id === event.target.value);
+                      setDoctorId(event.target.value);
+                      if (selected) setDepartment(selected.department);
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
+                  >
+                    <option value="">Select doctor</option>
+                    {doctors.map((doctor) => (
+                      <option key={doctor.id} value={doctor.id}>{doctor.name} · {doctor.department}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-slate-500">A patient may have one consultation token per doctor each day.</p>
+                </div>
+              )}
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Scheme</label>

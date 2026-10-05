@@ -3,6 +3,7 @@ import { X, ReceiptText, Plus, Trash2, DollarSign, ShieldCheck, CheckCircle2, St
 import { useHospital } from '../context/HospitalContext';
 import { BillItem } from '../types';
 import { PatientLookup } from './billing/PatientLookup';
+import { applyInsuranceBreakdown, parseInsuranceDeductible, sumInvoiceItemField } from '../utils/insuranceInvoice';
 
 interface NewInvoiceModalProps {
   isOpen: boolean;
@@ -10,7 +11,7 @@ interface NewInvoiceModalProps {
 }
 
 export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClose }) => {
-  const { patients, receptionTokens, createInvoice, addNotification } = useHospital();
+  const { patients, receptionTokens, hospitalPriceCatalog, pharmacy, createInvoice, addNotification } = useHospital();
 
   const [patientId, setPatientId] = useState('');
   const [encounterType, setEncounterType] = useState<'OPD' | 'IPD'>('OPD');
@@ -22,11 +23,15 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
   const [itemDesc, setItemDesc] = useState('');
   const [itemCategory, setItemCategory] = useState<BillItem['category']>('Consultation');
   const [itemPrice, setItemPrice] = useState(75.0);
+  const [catalogSearch, setCatalogSearch] = useState('');
   const [dueRemarks, setDueRemarks] = useState('');
   const [formError, setFormError] = useState('');
   const selectedPatient = patients.find((patient) => patient.id === patientId);
   const patientTokens = receptionTokens.filter((token) => token.patientId === patientId && token.doctorOrders);
   const selectedToken = patientTokens.find((token) => token.id === selectedTokenId);
+  const isInsuranceInvoice = selectedPatient?.payMode === 'Insurance';
+  const deductibleConfigured = selectedPatient?.insurance.deductibleAmount ||
+    parseInsuranceDeductible(selectedPatient?.insuranceList?.find((record) => record.isPrimary)?.copayDeductible);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -76,6 +81,26 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
     setItems(items.filter((i) => i.id !== id));
   };
 
+  const addCatalogItem = (entry: { id: string; code: string; cptCode?: string; name: string; category: BillItem['category']; price: number }) => {
+    if (items.some((item) => item.serviceCode === entry.code || (entry.cptCode && item.cptCode === entry.cptCode))) {
+      setFormError(`${entry.name} is already on this invoice.`);
+      return;
+    }
+    setItems((current) => [...current, {
+      id: `ITM-${Date.now()}`,
+      serviceCode: entry.code,
+      cptCode: entry.cptCode,
+      description: entry.name,
+      category: entry.category,
+      unitCost: entry.price,
+      quantity: 1,
+      amount: entry.price,
+      totalPrice: entry.price,
+    }]);
+    setCatalogSearch('');
+    setFormError('');
+  };
+
   const updateItem = (id: string, updates: Partial<BillItem>) => {
     setItems((current) => current.map((item) => {
       if (item.id !== id) return item;
@@ -104,8 +129,20 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
         amount: orders.consultationFee,
         totalPrice: orders.consultationFee,
       }] : []),
+      ...(orders.medicationRequests || []).map((order) => ({
+        id: order.id,
+        serviceCode: order.sku,
+        description: `${order.medicationName} (${order.sku})`,
+        category: 'Pharmacy' as const,
+        unitCost: order.unitPrice,
+        quantity: order.quantity,
+        amount: order.price,
+        totalPrice: order.price,
+      })),
       ...orders.labRequests.filter((order) => order.price > 0).map((order) => ({
         id: order.id,
+        serviceCode: order.id,
+        cptCode: order.cptCode,
         description: order.testName,
         category: 'Lab Test' as const,
         unitCost: order.price,
@@ -115,6 +152,8 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
       })),
       ...orders.radiologyRequests.filter((order) => order.price > 0).map((order) => ({
         id: order.id,
+        serviceCode: order.id,
+        cptCode: order.cptCode,
         description: order.studyName,
         category: 'Radiology' as const,
         unitCost: order.price,
@@ -124,6 +163,8 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
       })),
       ...orders.procedureRequests.filter((order) => order.price > 0).map((order) => ({
         id: order.id,
+        serviceCode: order.id,
+        cptCode: order.cptCode,
         description: order.procedureName,
         category: 'Surgical Procedure' as const,
         unitCost: order.price,
@@ -143,7 +184,20 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
   };
 
   const totalAmount = items.reduce((sum, item) => sum + (Number(item.amount ?? item.totalPrice) || 0), 0);
-  const balanceDue = Math.max(0, totalAmount - (Number(insuranceCovered) || 0) + copayAmount);
+  const invoiceItems = isInsuranceInvoice
+    ? applyInsuranceBreakdown(
+        items,
+        selectedPatient?.insurance.serviceCopay,
+        100 - (selectedPatient?.insurance.coveragePercentage ?? 100),
+        deductibleConfigured
+      )
+    : items;
+  const invoiceInsuranceCovered = isInsuranceInvoice ? sumInvoiceItemField(invoiceItems, 'insuranceAmount') : Number(insuranceCovered) || 0;
+  const invoiceCopay = isInsuranceInvoice ? sumInvoiceItemField(invoiceItems, 'copayAmount') : copayAmount;
+  const invoiceDeductible = isInsuranceInvoice ? sumInvoiceItemField(invoiceItems, 'deductibleAmount') : 0;
+  const balanceDue = isInsuranceInvoice
+    ? invoiceCopay + invoiceDeductible
+    : Math.max(0, totalAmount - (Number(insuranceCovered) || 0) + copayAmount);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,11 +215,11 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
       setFormError('Each service needs a description, a positive unit price, and a whole-number quantity.');
       return;
     }
-    if (!Number.isFinite(Number(insuranceCovered)) || Number(insuranceCovered) < 0 || Number(insuranceCovered) > totalAmount) {
+    if (!isInsuranceInvoice && (!Number.isFinite(Number(insuranceCovered)) || Number(insuranceCovered) < 0 || Number(insuranceCovered) > totalAmount)) {
       setFormError('Insurance adjudication must be between $0 and the invoice subtotal.');
       return;
     }
-    if (!Number.isFinite(copayAmount) || copayAmount < 0) {
+    if (!isInsuranceInvoice && (!Number.isFinite(copayAmount) || copayAmount < 0)) {
       setFormError('Patient copay must be a valid non-negative amount.');
       return;
     }
@@ -181,15 +235,17 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
       patientName: `${selectedPatient.firstName} ${selectedPatient.lastName}`,
       encounterType,
       encounterTokenId: selectedToken?.id,
+      insuranceProvider: isInsuranceInvoice ? selectedPatient.insurance.provider : undefined,
       diagnoses,
       patientPhone: selectedPatient.phone,
       patientEmail: selectedPatient.email,
       issueDate: new Date().toISOString().split('T')[0],
       dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      status: saveDraft ? 'Draft' : Number(insuranceCovered) > 0 ? 'Pending Insurance' : balanceDue === 0 ? 'Paid' : 'Pending',
-      items,
-      insuranceCoveredAmount: insuranceCovered,
-      copayAmount,
+      status: saveDraft ? 'Draft' : invoiceInsuranceCovered > 0 ? 'Pending Insurance' : balanceDue === 0 ? 'Paid' : 'Pending',
+      items: invoiceItems,
+      insuranceCoveredAmount: invoiceInsuranceCovered,
+      copayAmount: invoiceCopay,
+      deductibleAmount: invoiceDeductible,
       dueRemarks: dueRemarks.trim() || undefined,
       tax: 0,
     });
@@ -380,15 +436,22 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({ isOpen, onClos
               <input
                 type="number"
                 step="0.01"
-                value={insuranceCovered}
+                value={isInsuranceInvoice ? invoiceInsuranceCovered : insuranceCovered}
                 onChange={(e) => setInsuranceCovered(Number(e.target.value))}
+                readOnly={isInsuranceInvoice}
                 className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono font-medium focus:ring-2 focus:ring-blue-500 outline-none"
               />
+              {isInsuranceInvoice && <span className="mt-1 block text-[9px] text-slate-500">Calculated from registered insurance service copay settings.</span>}
             </div>
             <label className="text-[10px] font-semibold text-slate-600">
               Patient copay ($)
-              <input type="number" min="0" step="0.01" value={copayAmount} onChange={(event) => setCopayAmount(Math.max(0, Number(event.target.value) || 0))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 font-mono text-xs" />
+              <input type="number" min="0" step="0.01" value={isInsuranceInvoice ? invoiceCopay : copayAmount} onChange={(event) => setCopayAmount(Math.max(0, Number(event.target.value) || 0))} readOnly={isInsuranceInvoice} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 font-mono text-xs" />
             </label>
+            {isInsuranceInvoice && (
+              <div className="col-span-2 flex justify-between text-[10px] text-slate-600">
+                <span>Patient deductible</span><span className="font-mono">${invoiceDeductible.toFixed(2)}</span>
+              </div>
+            )}
             <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3 text-right">
               <span className="text-[10px] text-blue-700 uppercase font-semibold block tracking-wider">
                 Patient Balance Due

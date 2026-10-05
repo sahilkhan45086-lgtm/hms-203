@@ -33,7 +33,10 @@ import {
   TokenDoctorOrder,
   TokenBillingSummary,
   TokenDiagnosticReport,
+  TokenServiceItem,
+  BillItem,
 } from '../../types';
+import { applyInsuranceBreakdown, sumInvoiceItemField } from '../../utils/insuranceInvoice';
 
 interface TokenWorkflowModalProps {
   token: ReceptionToken | null;
@@ -110,6 +113,8 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
     currentUser,
     patients,
     receptionTokens,
+    hospitalPriceCatalog,
+    pharmacy,
     addNotification,
   } = useHospital();
 
@@ -126,6 +131,11 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   const [painScale, setPainScale] = useState<number>(0);
   const [triageLevel, setTriageLevel] = useState<TokenVitalsRecord['triageLevel']>('Level 3 - Urgent');
   const [nursingNotes, setNursingNotes] = useState<string>('Patient oriented x3. Ambulatory.');
+  const [serviceItems, setServiceItems] = useState<TokenServiceItem[]>([]);
+  const [serviceItemName, setServiceItemName] = useState('');
+  const [serviceItemPrice, setServiceItemPrice] = useState('');
+  const [serviceItemCategory, setServiceItemCategory] = useState<TokenServiceItem['category']>('Test');
+  const [serviceItemError, setServiceItemError] = useState('');
 
   // Step 3: Doctor EMR Form State
   const [healthSummary, setHealthSummary] = useState<string>('');
@@ -140,6 +150,8 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   const [labOrders, setLabOrders] = useState<TokenDoctorOrder['labRequests']>([]);
   const [radiologyOrders, setRadiologyOrders] = useState<TokenDoctorOrder['radiologyRequests']>([]);
   const [procedureOrders, setProcedureOrders] = useState<TokenDoctorOrder['procedureRequests']>([]);
+  const [medicationRequests, setMedicationRequests] = useState<NonNullable<TokenDoctorOrder['medicationRequests']>>([]);
+  const [catalogSearch, setCatalogSearch] = useState('');
 
   // Step 4: Cashier Form State
   const [paymentMethod, setPaymentMethod] = useState<TokenBillingSummary['paymentMethod']>('Credit/Debit Card');
@@ -175,6 +187,11 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
         setTriageLevel(token.vitals.triageLevel);
         if (token.vitals.nursingNotes) setNursingNotes(token.vitals.nursingNotes);
       }
+      setServiceItems(token.serviceItems || []);
+      setServiceItemName('');
+      setServiceItemPrice('');
+      setServiceItemCategory(token.serviceType === 'Physio Technician' ? 'Technician Service' : 'Test');
+      setServiceItemError('');
       if (token.doctorOrders) {
         setHealthSummary(token.doctorOrders.healthSummary || '');
         setChiefComplaint(token.doctorOrders.chiefComplaint || '');
@@ -184,6 +201,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
         setLabOrders(token.doctorOrders.labRequests || []);
         setRadiologyOrders(token.doctorOrders.radiologyRequests || []);
         setProcedureOrders(token.doctorOrders.procedureRequests || []);
+        setMedicationRequests(token.doctorOrders.medicationRequests || []);
       } else {
         setHealthSummary('');
         setChiefComplaint('');
@@ -194,6 +212,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
         setLabOrders([]);
         setRadiologyOrders([]);
         setProcedureOrders([]);
+        setMedicationRequests([]);
       }
       setDoctorFormError('');
     }
@@ -204,13 +223,79 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   const currentStageIndex = STAGES.findIndex((s) => s.id === (token.currentStage || '1_REGISTRATION'));
 
   // Calculate Cashier Totals
-  const currentConsult = token.doctorOrders?.consultationFee || consultationFee;
-  const currentLabsTotal = (token.doctorOrders?.labRequests || labOrders).reduce((acc, l) => acc + l.price, 0);
-  const currentRadTotal = (token.doctorOrders?.radiologyRequests || radiologyOrders).reduce((acc, r) => acc + r.price, 0);
-  const currentProcTotal = (token.doctorOrders?.procedureRequests || procedureOrders).reduce((acc, p) => acc + p.price, 0);
-  const subtotal = currentConsult + currentLabsTotal + currentRadTotal + currentProcTotal;
-
+  const currentConsult = token.serviceType === 'Consultation'
+    ? token.doctorOrders?.consultationFee ?? consultationFee
+    : 0;
+  const currentLabOrders = token.serviceType === 'Consultation' ? token.doctorOrders?.labRequests || labOrders : [];
+  const currentRadiologyOrders = token.serviceType === 'Consultation' ? token.doctorOrders?.radiologyRequests || radiologyOrders : [];
+  const currentProcedureOrders = token.serviceType === 'Consultation' ? token.doctorOrders?.procedureRequests || procedureOrders : [];
+  const currentServiceItems = token.serviceType === 'Consultation' ? [] : serviceItems;
   const scheme = token.paymentScheme || { schemeType: 'Self-Pay' as PaymentSchemeType };
+  const billingItems: BillItem[] = [
+    ...(currentConsult > 0 ? [{
+      id: `${token.id}-consultation`,
+      description: `Physician Consultation — ${token.doctorName || 'Attending Physician'}`,
+      category: 'Consultation' as const,
+      unitCost: currentConsult,
+      quantity: 1,
+      amount: currentConsult,
+    }] : []),
+    ...currentServiceItems.map((item) => ({
+      id: item.id,
+      description: item.name,
+      category: item.category === 'Test' ? 'Lab Test' as const : item.category === 'Procedure' ? 'Surgical Procedure' as const : 'Technician Service' as const,
+      unitCost: item.price,
+      quantity: 1,
+      amount: item.price,
+    })),
+    ...currentLabOrders.map((item) => ({
+      id: item.id,
+      serviceCode: item.id,
+      cptCode: item.cptCode,
+      description: item.testName,
+      category: 'Lab Test' as const,
+      unitCost: item.price,
+      quantity: 1,
+      amount: item.price,
+    })),
+    ...currentRadiologyOrders.map((item) => ({
+      id: item.id,
+      serviceCode: item.id,
+      cptCode: item.cptCode,
+      description: item.studyName,
+      category: 'Radiology' as const,
+      unitCost: item.price,
+      quantity: 1,
+      amount: item.price,
+    })),
+    ...currentProcedureOrders.map((item) => ({
+      id: item.id,
+      cptCode: item.cptCode,
+      description: item.procedureName,
+      category: 'Surgical Procedure' as const,
+      unitCost: item.price,
+      quantity: 1,
+      amount: item.price,
+    })),
+    ...(token.serviceType === 'Consultation' ? token.doctorOrders?.medicationRequests || [] : []).map((item) => ({
+      id: item.id,
+      serviceCode: item.sku,
+      description: `${item.medicationName} (${item.sku})`,
+      category: 'Pharmacy' as const,
+      unitCost: item.unitPrice,
+      quantity: item.quantity,
+      amount: item.price,
+    })),
+  ];
+  const subtotal = billingItems.reduce((total, item) => total + item.amount, 0);
+  const insuranceBillingItems = scheme.schemeType === 'Insurance'
+    ? applyInsuranceBreakdown(
+        billingItems,
+        scheme.serviceCopay,
+        100 - (scheme.coveragePercent ?? 80),
+        scheme.deductibleAmount
+      )
+    : billingItems;
   const dailyInsuranceLimitAed = token.patientDetails?.insuranceDailyClinicLimitAed;
   const visitDate = token.visitDate || token.createdDate;
   const usedInsuranceTodayAed = receptionTokens
@@ -228,7 +313,11 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   let discountAmount = 0;
   let patientPortion = subtotal;
 
-  if (scheme.schemeType === 'Insurance' || scheme.schemeType === 'Corporate' || scheme.schemeType === 'Package') {
+  if (scheme.schemeType === 'Insurance') {
+    insuranceCovered = sumInvoiceItemField(insuranceBillingItems, 'insuranceAmount');
+    discountAmount = sumInvoiceItemField(insuranceBillingItems, 'discountAmount');
+    patientPortion = Math.max(0, sumInvoiceItemField(insuranceBillingItems, 'netAmount') - insuranceCovered);
+  } else if (scheme.schemeType === 'Corporate' || scheme.schemeType === 'Package') {
     const cov = scheme.coveragePercent || 80;
     insuranceCovered = Math.round(subtotal * (cov / 100));
     patientPortion = Math.max(0, subtotal - insuranceCovered);
@@ -249,6 +338,14 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
   // Handle Step 2 Submission (Nursing Vitals)
   const handleSaveVitals = (e: React.FormEvent) => {
     e.preventDefault();
+    const isNurseServiceToken = token.serviceType === 'Billing & Cashier' || token.serviceType === 'Physio Technician';
+    if (isNurseServiceToken && serviceItems.length === 0) {
+      setServiceItemError(token.serviceType === 'Physio Technician'
+        ? 'Add at least one technician service before sending this token to cashier.'
+        : 'Add at least one test or procedure before sending this token to cashier.');
+      return;
+    }
+    setServiceItemError('');
     const vitalsRecord: TokenVitalsRecord = {
       bpSystolic,
       bpDiastolic,
@@ -263,8 +360,77 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
       nurseName: currentUser?.name || 'Triage Nurse Staff, RN',
       recordedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
     };
-    updateTokenVitals(token.id, vitalsRecord);
-    setActiveTab('3_DOCTOR_EMR');
+    updateTokenVitals(token.id, vitalsRecord, isNurseServiceToken ? serviceItems : undefined);
+    setActiveTab(isNurseServiceToken ? '4_CASHIER_BILLING' : '3_DOCTOR_EMR');
+  };
+
+  const handleSaveTechnicianServices = () => {
+    if (serviceItems.length === 0) {
+      setServiceItemError('Add at least one technician service before sending this token to cashier.');
+      return;
+    }
+    setServiceItemError('');
+    advanceTokenWorkflow(token.id, '4_CASHIER_BILLING', { serviceItems });
+    setActiveTab('4_CASHIER_BILLING');
+  };
+
+  const addServiceItem = () => {
+    if (!serviceItemName.trim() || !Number.isFinite(Number(serviceItemPrice)) || Number(serviceItemPrice) <= 0) {
+      setServiceItemError('Enter a service name and a price greater than zero.');
+      return;
+    }
+    setServiceItems((items) => [...items, {
+      id: `TS-${Date.now()}-${items.length}`,
+      name: serviceItemName.trim(),
+      category: token?.serviceType === 'Physio Technician' ? 'Technician Service' : serviceItemCategory,
+      price: Number(serviceItemPrice),
+      addedBy: currentUser?.name || 'Clinical Staff',
+      addedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    }]);
+    setServiceItemName('');
+    setServiceItemPrice('');
+    setServiceItemError('');
+  };
+
+  const addCatalogOrder = (entry: { id: string; code: string; cptCode?: string; name: string; category: string; price: number; department?: string; dosageForm?: string; sku?: string }) => {
+    const id = `${entry.id}-${Date.now()}`;
+    if (entry.sku || entry.category === 'Medication') {
+      setMedicationRequests((items) => [...items, {
+        id,
+        sku: entry.sku || entry.code,
+        medicationName: entry.name,
+        quantity: 1,
+        unitPrice: entry.price,
+        price: entry.price,
+      }]);
+    } else if (entry.category === 'Diagnostic Lab') {
+      setLabOrders((items) => [...items, {
+        id,
+        testName: entry.name,
+        category: entry.department || 'Laboratory',
+        cptCode: entry.cptCode,
+        price: entry.price,
+        status: 'Ordered',
+      }]);
+    } else if (entry.category === 'Radiology & Imaging') {
+      setRadiologyOrders((items) => [...items, {
+        id,
+        studyName: entry.name,
+        modality: entry.department || 'Imaging',
+        cptCode: entry.cptCode,
+        price: entry.price,
+        status: 'Ordered',
+      }]);
+    } else {
+      setProcedureOrders((items) => [...items, {
+        id,
+        cptCode: entry.cptCode || entry.code,
+        procedureName: entry.name,
+        price: entry.price,
+        status: 'Scheduled',
+      }]);
+    }
+    setCatalogSearch('');
   };
 
   // Handle Step 3 Submission (Doctor EMR)
@@ -283,6 +449,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
       labRequests: labOrders,
       radiologyRequests: radiologyOrders,
       procedureRequests: procedureOrders,
+      medicationRequests,
       consultationFee,
       orderedByDoctorId: token.doctorId || currentUser?.id || 'DOC-DEFAULT',
       orderedByDoctorName: token.doctorName || currentUser?.name || 'Attending Physician, MD',
@@ -307,10 +474,13 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
     const billingSummary: TokenBillingSummary = {
       invoiceNumber: `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`,
       subtotal,
+      items: scheme.schemeType === 'Insurance' ? insuranceBillingItems : billingItems,
       schemeType: scheme.schemeType,
       insuranceCoveredAmount: insuranceCovered,
       discountAmount,
       copayOrSelfPayAmount: patientPortion,
+      copayAmount: scheme.schemeType === 'Insurance' ? sumInvoiceItemField(insuranceBillingItems, 'copayAmount') : undefined,
+      deductibleAmount: scheme.schemeType === 'Insurance' ? sumInvoiceItemField(insuranceBillingItems, 'deductibleAmount') : undefined,
       totalPaid: patientPortion,
       balanceDue: 0,
       paymentMethod,
@@ -325,10 +495,11 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
       dailyInsuranceUsedAfterAed: scheme.schemeType === 'Insurance' && applyDailyInsuranceLimit ? projectedInsuranceTodayAed : undefined,
     };
     settleTokenBilling(token.id, billingSummary);
-    const hasDiagnostics =
-      (token.doctorOrders?.labRequests && token.doctorOrders.labRequests.length > 0) ||
-      (token.doctorOrders?.radiologyRequests && token.doctorOrders.radiologyRequests.length > 0) ||
-      (token.doctorOrders?.procedureRequests && token.doctorOrders.procedureRequests.length > 0);
+    const hasDiagnostics = token.serviceType === 'Consultation' && (
+      currentLabOrders.length > 0 ||
+      currentRadiologyOrders.length > 0 ||
+      currentProcedureOrders.length > 0
+    );
     setActiveTab(hasDiagnostics ? '5_DIAGNOSTICS_PROCEDURES' : '6_COMPLETED_REPORTS');
   };
 
@@ -656,14 +827,22 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
               <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                 <div>
                   <h4 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-                    <HeartPulse className="w-5 h-5 text-rose-600" />
-                    Step 2: Nursing Staff Triage & Vitals Acquisition
+                    {token.serviceType === 'Physio Technician'
+                      ? <Activity className="w-5 h-5 text-teal-600" />
+                      : <HeartPulse className="w-5 h-5 text-rose-600" />}
+                    {token.serviceType === 'Physio Technician' ? 'Step 2: Physiotherapy Services' : 'Step 2: Nursing Staff Triage & Vitals Acquisition'}
                   </h4>
                   <p className="text-sm text-slate-500">
-                    Document comprehensive patient vitals, pain index, and clinical urgency score before physician review.
+                    {token.serviceType === 'Physio Technician'
+                      ? 'Record the technician services and their charges before sending this token to the cashier.'
+                      : 'Document comprehensive patient vitals, pain index, and clinical urgency score before physician review.'}
                   </p>
                 </div>
-                {token.vitals ? (
+                {token.serviceType === 'Physio Technician' ? (
+                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${serviceItems.length ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                    {serviceItems.length ? `${serviceItems.length} service(s) added` : 'Services pending'}
+                  </span>
+                ) : token.vitals ? (
                   <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">
                     Vitals Recorded
                   </span>
@@ -674,6 +853,8 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                 )}
               </div>
 
+              {token.serviceType !== 'Physio Technician' && (
+              <>
               {/* Vitals Form Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -781,9 +962,73 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                   </select>
                 </div>
               </div>
+              </>
+              )}
+
+              {(token.serviceType === 'Billing & Cashier' || token.serviceType === 'Physio Technician') && (
+                <section className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/50 p-4">
+                  <div>
+                    <h5 className="text-sm font-bold text-slate-900">
+                      {token.serviceType === 'Physio Technician' ? 'Technician services' : 'Tests and procedures'}
+                    </h5>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Add billable items and their prices. The cashier will receive these items on this token.
+                    </p>
+                  </div>
+                  <div className={`grid gap-2 ${token.serviceType === 'Physio Technician' ? 'sm:grid-cols-[1fr_160px_auto]' : 'sm:grid-cols-[1fr_160px_130px_auto]'}`}>
+                    {token.serviceType !== 'Physio Technician' && (
+                      <select
+                        value={serviceItemCategory}
+                        onChange={(event) => setServiceItemCategory(event.target.value as TokenServiceItem['category'])}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      >
+                        <option value="Test">Test</option>
+                        <option value="Procedure">Procedure</option>
+                      </select>
+                    )}
+                    <input
+                      value={serviceItemName}
+                      onChange={(event) => setServiceItemName(event.target.value)}
+                      placeholder={token.serviceType === 'Physio Technician' ? 'Physiotherapy service' : 'Test or procedure name'}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                    />
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={serviceItemPrice}
+                      onChange={(event) => setServiceItemPrice(event.target.value)}
+                      placeholder="Price (AED)"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                    />
+                    <button type="button" onClick={addServiceItem} className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-bold text-white hover:bg-teal-800">
+                      <Plus className="mr-1 inline h-3.5 w-3.5" /> Add
+                    </button>
+                  </div>
+                  {serviceItemError && <p role="alert" className="text-xs font-semibold text-rose-700">{serviceItemError}</p>}
+                  {serviceItems.length > 0 && (
+                    <ul className="divide-y divide-teal-100 rounded-lg border border-teal-100 bg-white">
+                      {serviceItems.map((item) => (
+                        <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                          <span className="min-w-0">
+                            <span className="font-semibold text-slate-800">{item.name}</span>
+                            <span className="ml-2 text-slate-500">{item.category} · Added by {item.addedBy}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-3 font-semibold text-slate-800">
+                            AED {item.price.toFixed(2)}
+                            <button type="button" aria-label={`Remove ${item.name}`} onClick={() => setServiceItems((items) => items.filter((service) => service.id !== item.id))} className="text-slate-400 hover:text-rose-600">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
 
               {/* Nursing Notes */}
-              <div>
+              {token.serviceType !== 'Physio Technician' && <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">Nursing Observations & Allergy Check</label>
                 <textarea
                   rows={2}
@@ -792,15 +1037,21 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:bg-white text-slate-900"
                   placeholder="Note ambulatory status, distress level, allergy confirmation..."
                 />
-              </div>
+              </div>}
 
               {/* Submit Vitals Button */}
               <div className="flex justify-end gap-3 pt-2 border-t border-slate-200">
                 <button
-                  type="submit"
+                  type={token.serviceType === 'Physio Technician' ? 'button' : 'submit'}
+                  onClick={token.serviceType === 'Physio Technician' ? handleSaveTechnicianServices : undefined}
                   className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold rounded-lg flex items-center gap-2 shadow-xs transition-colors"
                 >
-                  <CheckCircle2 className="w-4 h-4" /> Save Vitals & Forward to Doctor EMR (Step 3)
+                  <CheckCircle2 className="w-4 h-4" />
+                  {token.serviceType === 'Physio Technician'
+                    ? 'Save Technician Services & Forward to Cashier (Step 4)'
+                    : token.serviceType === 'Consultation'
+                    ? 'Save Vitals & Forward to Doctor EMR (Step 3)'
+                    : 'Save Vitals & Tests/Procedures; Forward to Cashier (Step 4)'}
                 </button>
               </div>
             </form>
@@ -962,6 +1213,59 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
               </div>
 
               {/* Diagnostic Orders: Labs, Radiology & Procedure CPT */}
+              <section className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3.5">
+                <div>
+                  <h5 className="text-xs font-bold text-indigo-950">Add from service &amp; medicine catalog</h5>
+                  <p className="text-[10px] text-indigo-800">Search by service name, internal code, CPT code, or medicine SKU. Catalog price is loaded into this visit’s order.</p>
+                </div>
+                <input
+                  type="search"
+                  value={catalogSearch}
+                  onChange={(event) => setCatalogSearch(event.target.value)}
+                  placeholder="Search name, code, CPT, or medication SKU..."
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs"
+                />
+                {catalogSearch.trim() && (
+                  <div className="max-h-52 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                    {[
+                      ...hospitalPriceCatalog
+                        .filter((item) => `${item.name} ${item.code} ${item.cptCode || ''} ${item.department}`.toLowerCase().includes(catalogSearch.trim().toLowerCase()))
+                        .map((item) => ({ id: item.id, code: item.code, cptCode: item.cptCode, name: item.name, category: item.category, price: item.standardPrice, department: item.department })),
+                      ...pharmacy
+                        .filter((item) => `${item.name} ${item.genericName} ${item.sku}`.toLowerCase().includes(catalogSearch.trim().toLowerCase()))
+                        .map((item) => ({ id: item.id, code: item.sku, sku: item.sku, name: `${item.name} — ${item.genericName}`, category: 'Medication', price: item.unitPrice, dosageForm: item.dosageForm })),
+                    ].slice(0, 10).map((entry) => (
+                      <button
+                        key={`${entry.id}-${entry.code}`}
+                        type="button"
+                        onClick={() => addCatalogOrder(entry)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-indigo-50"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-semibold text-slate-800">{entry.name}</span>
+                          <span className="text-[10px] text-slate-500">{entry.code}{entry.cptCode ? ` · CPT ${entry.cptCode}` : ''} · {entry.category}</span>
+                        </span>
+                        <span className="shrink-0 text-xs font-mono font-bold text-slate-800">AED {entry.price.toFixed(2)}</span>
+                      </button>
+                    ))}
+                    {hospitalPriceCatalog.filter((item) => `${item.name} ${item.code} ${item.cptCode || ''} ${item.department}`.toLowerCase().includes(catalogSearch.trim().toLowerCase())).length === 0 &&
+                      pharmacy.filter((item) => `${item.name} ${item.genericName} ${item.sku}`.toLowerCase().includes(catalogSearch.trim().toLowerCase())).length === 0 && (
+                        <p className="p-3 text-xs text-slate-500">No matching service, CPT, or stocked medicine found.</p>
+                      )}
+                  </div>
+                )}
+                {medicationRequests.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase text-slate-600">Ordered medications</p>
+                    {medicationRequests.map((medication) => (
+                      <div key={medication.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+                        <span>{medication.medicationName} · {medication.sku} · Qty {medication.quantity}</span>
+                        <span className="flex items-center gap-3"><strong>AED {medication.price.toFixed(2)}</strong><button type="button" onClick={() => setMedicationRequests((items) => items.filter((item) => item.id !== medication.id))} className="text-rose-600">Remove</button></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Labs Column */}
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
@@ -1188,21 +1492,86 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
               )}
 
               {/* Itemized Services Breakdown */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
+              {scheme.schemeType === 'Insurance' && (
+                <div className="overflow-hidden rounded-xl border border-slate-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                    <div>
+                      <h5 className="text-sm font-bold text-slate-900">Insurance invoice ledger</h5>
+                      <p className="text-[10px] text-slate-500">Copay percentages follow the service settings saved on the patient’s insurance registration.</p>
+                    </div>
+                    <span className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-right">
+                      <span className="block text-[9px] font-bold uppercase tracking-wide text-blue-700">Patient amount due</span>
+                      <strong className="font-mono text-base text-blue-950">AED {patientPortion.toFixed(2)}</strong>
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-left text-[10px]">
+                      <thead className="bg-white text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-2 py-2">Sr. no.</th>
+                          <th className="px-2 py-2">Service name</th>
+                          <th className="px-2 py-2 text-center">Unit</th>
+                          <th className="px-2 py-2 text-right">Rate</th>
+                          <th className="px-2 py-2 text-right">Discount</th>
+                          <th className="px-2 py-2 text-right">Net</th>
+                          <th className="px-2 py-2 text-right">Deductible</th>
+                          <th className="px-2 py-2 text-right">Co-pay</th>
+                          <th className="px-2 py-2 text-right">Insurance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {insuranceBillingItems.map((item, index) => (
+                          <tr key={item.id}>
+                            <td className="px-2 py-2 text-slate-500">{index + 1}</td>
+                            <td className="px-2 py-2 font-medium text-slate-800">{item.description}</td>
+                            <td className="px-2 py-2 text-center">{item.quantity}</td>
+                            <td className="px-2 py-2 text-right font-mono">AED {item.unitCost.toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right font-mono">AED {(item.discountAmount || 0).toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right font-mono font-semibold">AED {(item.netAmount || 0).toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right font-mono">AED {(item.deductibleAmount || 0).toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right font-mono">{item.copayPercentage}% / AED {(item.copayAmount || 0).toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right font-mono text-emerald-700">AED {(item.insuranceAmount || 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="space-y-1 border-t border-slate-200 bg-slate-50 p-4 text-xs">
+                    <div className="flex justify-between"><span>Gross charges</span><span className="font-mono">AED {subtotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span>Discount</span><span className="font-mono">-AED {sumInvoiceItemField(insuranceBillingItems, 'discountAmount').toFixed(2)}</span></div>
+                    <div className="flex justify-between font-medium"><span>Net charges</span><span className="font-mono">AED {sumInvoiceItemField(insuranceBillingItems, 'netAmount').toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span>Patient deductible</span><span className="font-mono">AED {sumInvoiceItemField(insuranceBillingItems, 'deductibleAmount').toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span>Patient co-pay</span><span className="font-mono">AED {sumInvoiceItemField(insuranceBillingItems, 'copayAmount').toFixed(2)}</span></div>
+                    <div className="flex justify-between text-emerald-700"><span>Insurance share</span><span className="font-mono">AED {insuranceCovered.toFixed(2)}</span></div>
+                    <div className="flex justify-between border-t border-slate-300 pt-2 text-sm font-bold"><span>Total patient responsibility</span><span className="font-mono text-blue-900">AED {patientPortion.toFixed(2)}</span></div>
+                  </div>
+                </div>
+              )}
+              {scheme.schemeType !== 'Insurance' && <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex justify-between text-xs font-bold text-slate-600 uppercase tracking-wider">
                   <span>Service Description</span>
-                  <span>Fee ($)</span>
+                  <span>Fee (AED)</span>
                 </div>
                 <div className="divide-y divide-slate-100 text-sm">
-                  <div className="px-4 py-2.5 flex justify-between">
+                  {currentConsult > 0 && <div className="px-4 py-2.5 flex justify-between">
                     <div>
                       <p className="font-medium text-slate-800">Physician Consultation</p>
                       <p className="text-xs text-slate-500">{token.doctorName || 'Attending Physician'}</p>
                     </div>
                     <span className="font-semibold text-slate-900">AED {currentConsult.toFixed(2)}</span>
-                  </div>
+                  </div>}
 
-                  {(token.doctorOrders?.labRequests || labOrders).map((l, i) => (
+                  {currentServiceItems.map((item) => (
+                    <div key={item.id} className="px-4 py-2.5 flex justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-slate-800">{item.name}</p>
+                        <p className="text-xs text-slate-500">{item.category} · Added by {item.addedBy}</p>
+                      </div>
+                      <span className="font-semibold text-slate-900">AED {item.price.toFixed(2)}</span>
+                    </div>
+                  ))}
+
+                  {currentLabOrders.map((l, i) => (
                     <div key={i} className="px-4 py-2.5 flex justify-between">
                       <div>
                         <p className="font-medium text-slate-800">{l.testName}</p>
@@ -1212,7 +1581,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                     </div>
                   ))}
 
-                  {(token.doctorOrders?.radiologyRequests || radiologyOrders).map((r, i) => (
+                  {currentRadiologyOrders.map((r, i) => (
                     <div key={i} className="px-4 py-2.5 flex justify-between">
                       <div>
                         <p className="font-medium text-slate-800">{r.studyName}</p>
@@ -1222,7 +1591,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                     </div>
                   ))}
 
-                  {(token.doctorOrders?.procedureRequests || procedureOrders).map((p, i) => (
+                  {currentProcedureOrders.map((p, i) => (
                     <div key={i} className="px-4 py-2.5 flex justify-between">
                       <div>
                         <p className="font-medium text-slate-800">{p.procedureName}</p>
@@ -1259,7 +1628,7 @@ export const TokenWorkflowModal: React.FC<TokenWorkflowModalProps> = ({
                     <span className="text-teal-700 text-lg">AED {patientPortion.toFixed(2)}</span>
                   </div>
                 </div>
-              </div>
+              </div>}
 
               {/* Payment Mode Selector & Execution */}
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

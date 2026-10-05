@@ -112,6 +112,7 @@ const HospitalAppContent: React.FC = () => {
           <PatientRegistrationDesk
             onOpenNewPatient={() => setIsNewPatientOpen(true)}
             onEditPatient={(id) => {
+              setEditingPatientId(id);
               setSelectedPatientId(id);
               setIsNewPatientOpen(true);
             }}
